@@ -1,0 +1,249 @@
+BASE RULES
+
+$100 DAILY
+
+$300–$500 WEEKLY MINIMUM
+
+Vivian J. Computerbox – Trader Playbook (Master Recap v.INF)
+(as of 2025-08-14 — last locked full version)
+
+==================================================
+1. TRADER COMMANDMENTS
+==================================================
+
+Only enter high-probability scalp setups.
+
+Respect zones — no chasing. Zones must come from pre-market scan, prior-day highs/lows, or fresh intraday levels.
+
+Half-Roll Rule – Every Monday, split starting cash in half. Trade only with that half for the week. Keep the other half untouched as a buffer.
+
+Never use full powder unless it’s a confirmed multi-day swing.
+
+Maintain backup play fund (e.g., OMAH, NVDA) untouched unless major dip.
+
+Trade in high-volume windows only:
+  First Hour: 6:30–7:30 AM PT / 9:30–10:30 AM ET
+  Last Hour: 12:00–1:00 PM PT / 3:00–4:00 PM ET
+
+Max plays per window = 1–2 trades.
+
+Midday trades only if perfect setup or urgent reason.
+
+Profit target per play = $20–$50 min, $50–$100 ideal.
+
+$100 Walk Rule – If daily profit hits $100, stop unless there’s an A+ setup.
+
+R:R requirement = Min 1:1 (prefer 1:2 or 1:3).
+
+Zoom out before entering — check higher timeframes for trend/spikes.
+
+Exit plan = partial at +50%, remainder runs to target.
+
+Lock profits before major macro events (CPI, PPI, Fed minutes, earnings).
+
+No scalping core keepers first — only scalp owned holdings if nothing better in pre-scan.
+
+Under-$20 exception – Core keepers can be scalped if under $20/share.
+
+Never scalp from IRA — “secret stash” for long-term growth.
+
+==================================================
+2. CORE STRATEGIES
+==================================================
+
+MACD Alignment – 1m, 3m, and 5m MACD align same direction; entry when ≥2/3 timeframes show ≥75% probability.
+
+Fixed R:R – Pre-set entry, stop, and TP zones before placing order.
+
+Zone-Based Scalping – Buy near support, sell into resistance on confirmation.
+
+News & Momentum Pops – Volume + strength scanners; ride spikes.
+
+Covered Calls / Wheel – Run in IRA (SCHD + OMAH), Schwab when applicable. Roll up/out to protect dividends.
+
+==================================================
+3. LOCKED REFERENCE DATA
+==================================================
+
+SOFI Lock – Aug 12 @ 12:11 PM — $23.62 (+$1.21). Post-split = $20+ floor. Old sub-$10 charts = irrelevant.
+
+SOFI buy alert: $20.
+
+NVDA buy alert: $180.
+
+MU (Micron) – no shares; goal = acquire 100.
+
+IRA Core Blueprint – 100 SCHD + 100 OMAH, monthly CCs, protect dividends.
+
+Core Keepers (No-Sell): Apple (dream = 1,000 shares), NVDA (10 shares – backup fund), CWH (permanent emotional hold).
+
+Scalp Watchlist: AMD, NVDA, SOFI, OMAH, MP, USA Rare Earth, Arafura, Micron, Apple, + scanner gainers.
+
+==================================================
+4. DAILY WORKFLOW
+==================================================
+
+Pre-Market Scan – focus on existing holdings w/ breakout signs, fresh $20–$50 profit math, wheel-friendly names.
+
+Set Alerts – breakout/dip-buy levels.
+
+First Hour Trading – clean setups; stop at $100 unless A+.
+
+Midday Check – only if exceptional.
+
+Last Hour Trading – scan again for EOD movers.
+
+Nightly Reset – update watchlist, clear alerts, prep next day.
+
+==================================================
+5. RISK NOTES
+==================================================
+
+Avoid “quantum leaps” — only one device open in active chat at a time.
+
+Penny/micro-caps only if $500+ can move $50+ on a 20–30% pop.
+
+Never scalp from IRA — it’s the untouchable stash.
+
+==================================================
+END OF DAY RESET – CHECKLIST
+==================================================
+
+1. Archive Today
+- Save Daily Recap as YYYY-MM-DD.txt → drop in /Daily_Recaps/
+- Save Screenshots (if any) → drop in /Screenshots/YYYY-MM-DD/
+- If rules were updated → copy new text into /Playbook_Rules/Trader_Playbook_vX.X.txt
+
+2. Clear Clutter
+- Close fake desktop / AI tools / bot sandboxes
+- Empty Downloads, Temp, and Recycle Bin
+- Make sure nothing sneaky got resynced into OneDrive (ignore cloud — USB is master copy)
+
+3. Prep Tomorrow
+- Mark key levels from today (high, low, VWAP) for ETHZ, SOFI, OMAH, NVDA
+- Set alerts in TradingView/ToS for tomorrow (SOFI $20, OMAH $19, NVDA $180, etc.)
+- Verify powder left vs Half-Roll Rule
+
+4. Mental Reset
+- Log: “Did I follow rules today?” (Yes/No)
+- Note any emotional leaks (hesitation, FOMO, frustration)
+- Write 1 line for tomorrow’s mindset: “Patience > profits. Dirty paper is just chips.”
+
+5. Clean Slate
+- Close this thread / archive it
+- Open a new one for tomorrow → fresh rules + fresh recap flow
+
+==================================================
+DAILY MONEY ROUTINE (SCALP/WHEEL HYBRID)
+==================================================
+
+Pre-Market (30 min max)
+- Scan only your shortlist (SOFI, ETHZ, NVDA, OMAH, AMD, MU).
+- Mark zones (yesterday’s H/L, pre-market H/L, VWAP).
+- Set alerts at your buy/sell levels (so you’re not chasing).
+
+First Hour (Main Work Window)
+- Max 1–2 trades.
+- Only enter if:
+  • MACD alignment (1m, 3m, 5m all tilting same way)
+  • Price is at/near one of your marked zones.
+- Exit: Scale at +$20–$50, let runner aim for $50–$100.
+
+Midday (Optional)
+- Skip unless an A+ setup pops on scanner or an alert fires (SOFI dipping to $20, OMAH fill, etc.)
+
+Last Hour (Second Work Window)
+- Re-scan watchlist.
+- Trade only one clean setup (range breakout/breakdown).
+
+Night Reset (15 min)
+- Recap wins/losses in plain numbers.
+- Update zones + alerts.
+- Archive thread and start fresh for tomorrow.
+
+==================================================
+THE MONEY MACHINE EFFECT
+==================================================
+
+Inputs: Same tickers, same scans.
+Steps: Predefined entry rules (MACD + zones) + risk control.
+Outputs: Daily $50–$100 target, stop trading once hit.
+
+That’s how you turn “marinating” into a grind routine that compounds — 4 days a week, $500+ goal hits naturally.
+
+==================================================
+DEEZ'S CHEAT SHEET: "THE YESTERDAY SETUP"
+==================================================
+
+Pattern Name: Oversold Bounce Reversal (a.k.a. "The Yesterday Setup")
+
+Ideal Use: Intraday or swing scalp on large cap tech (e.g., AMD, NVDA, AAPL)
+
+Signals to Look For (on 1D or 1W chart views):
+- RSI(5) drops below 30
+  • Means the stock is oversold
+  • Look for leveling out or first curl upward
+
+- MACD (5,13,5) begins to flatten
+  • Momentum shift is slowing
+  • Bearish pressure weakening = potential reversal soon
+
+- Price action hits prior support/demand zone
+  • Look left on the chart: Is price revisiting a bounce zone?
+
+- Bollinger Bands: Price taps or wicks through lower band
+  • Signals possible bottoming behavior
+  • If it rides the lower band flat, don't rush — wait for curl up
+
+Entry Signal:
+- 1-min or 5-min green candle with strong volume
+- RSI crossing back above 30
+- MACD curl with signal line catching up
+
+Target Zone:
+- Next VWAP level or resistance (look at previous high of day)
+- $1.50–$3.00 above entry is typical on AMD/NVDA
+
+Stop Loss Zone:
+- Below most recent support wick
+- If MACD continues diving and RSI fails to curl, exit fast
+
+Hot Tip:
+- This setup is strongest after a 2–3 red candle sequence
+- Volume exhaustion + RSI divergence = sniper entry zone
+
+==================================================
+RILEY SECTION
+==================================================
+
+1. Don’t set daily profit or trade goals. Not every day offers good trading conditions.
+2. Set max loss rules. ALWAYS stop trading after 2 losses in 1 day.
+3. Create a trading routine. This helps you stay consistent and recognize when you’re in the zone versus when something is off.
+4. Focus on process, not profits. Consistently executing your strategy matters the most. The money WILL follow.
+5. Hide the P/L stats. Seeing these numbers makes you focus on results when individual trade outcomes don’t matter.
+6. Never enter a trade without a management plan. If you don’t have one, your emotions WILL take over.
+7. Journal / Track both trades and emotions. This is crucial for consistent improvement.
+
+Key takeaway: If you’re not aware of your habits that are hurting your trading, you’ll never become profitable.
+
+Supply & Demand Zones – The strategy marks up supply (resistance) and demand (support) zones. These are areas where price previously moved aggressively away. Zones should be drawn as bands rather than single lines because price can overshoot and bounce inside them.
+
+Focus on Extremes – Trades are taken only when price reaches an extreme high or low. Mid‑range moves are avoided because probabilities decrease. The edges of the range are referred to as “high‑probability reversal areas”.
+
+Wait for Confirmation – When price enters a zone, wait for signs of exhaustion (e.g., large candles followed by pullbacks) before entering. The zone acts as a queue, not a guarantee; patience is needed.
+
+Use an Indicator to Draw Zones – Custom indicators can plot significant supply and demand zones automatically. This avoids guesswork and keeps levels objective.
+
+Market Cycles – After a big move in one direction, the market tends to correct. Recognizing when a market is overextended helps anticipate reversals.
+
+Trading Steps:
+- Identify the range. Mark the most recent swing high and low to define the current range.
+- Draw supply and demand zones around these extremes.
+- Wait for price to enter a zone. Do not trade in the middle.
+- Look for a rejection pattern. Wait for a pullback or reversal candle.
+- Enter with tight risk. Place a stop just beyond the zone.
+- Take profits at the opposite side of the range. First target = midpoint. Second target = opposite zone.
+- Use trailing stops if price moves favorably.
+
+Risk Management:
+This strategy relies on high reward‑to‑risk setups. Losing trades are kept small because entries occur at zone extremes. Trades should be skipped when price is choppy in the middle of the range or when volume is low. Focus on quality over quantity.
