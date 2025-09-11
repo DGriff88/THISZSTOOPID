@@ -3,7 +3,15 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { initializeAlpacaService, getAlpacaService } from "./services/alpaca";
 import { TradingWebSocketService } from "./services/websocket";
-import { insertStrategySchema, insertTradeSchema } from "@shared/schema";
+import { HeadAndShouldersDetector } from "./services/patternDetection";
+import { 
+  insertStrategySchema, 
+  insertTradeSchema, 
+  insertOHLCVCandlesSchema,
+  insertPatternSignalSchema,
+  type OHLCVCandles,
+  type InsertOHLCVCandles
+} from "@shared/schema";
 import { z } from "zod";
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -269,6 +277,269 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error executing emergency stop:", error);
       res.status(500).json({ error: "Failed to execute emergency stop" });
+    }
+  });
+
+  // Initialize pattern detector
+  const patternDetector = new HeadAndShouldersDetector();
+
+  // OHLCV Candles endpoints
+  app.post("/api/market/candles", requireAuth, async (req: any, res) => {
+    try {
+      const candlesData = Array.isArray(req.body) ? req.body : [req.body];
+      const validatedCandles: InsertOHLCVCandles[] = [];
+      
+      for (const candleData of candlesData) {
+        try {
+          const validated = insertOHLCVCandlesSchema.parse(candleData);
+          validatedCandles.push(validated);
+        } catch (error) {
+          console.warn("Invalid candle data:", candleData, error);
+        }
+      }
+      
+      if (validatedCandles.length === 0) {
+        return res.status(400).json({ error: "No valid candle data provided" });
+      }
+      
+      const savedCandles = await storage.saveOHLCVCandles(validatedCandles);
+      res.json(savedCandles);
+    } catch (error) {
+      console.error("Error saving OHLCV candles:", error);
+      res.status(500).json({ error: "Failed to save OHLCV candles" });
+    }
+  });
+
+  app.get("/api/market/candles/:symbol/:timeframe", async (req, res) => {
+    try {
+      const { symbol, timeframe } = req.params;
+      const limit = parseInt(req.query.limit as string) || 100;
+      
+      const candles = await storage.getOHLCVCandles(symbol, timeframe, limit);
+      res.json(candles);
+    } catch (error) {
+      console.error("Error getting OHLCV candles:", error);
+      res.status(500).json({ error: "Failed to get OHLCV candles" });
+    }
+  });
+
+  app.get("/api/market/candles/:symbol/:timeframe/range", async (req, res) => {
+    try {
+      const { symbol, timeframe } = req.params;
+      const startTime = new Date(req.query.start as string);
+      const endTime = new Date(req.query.end as string);
+      
+      if (isNaN(startTime.getTime()) || isNaN(endTime.getTime())) {
+        return res.status(400).json({ error: "Invalid start or end time" });
+      }
+      
+      const candles = await storage.getOHLCVCandlesInRange(symbol, timeframe, startTime, endTime);
+      res.json(candles);
+    } catch (error) {
+      console.error("Error getting OHLCV candles in range:", error);
+      res.status(500).json({ error: "Failed to get OHLCV candles in range" });
+    }
+  });
+
+  // Pattern Detection endpoints
+  app.post("/api/patterns/detect/:strategyId", requireAuth, async (req: any, res) => {
+    try {
+      const { strategyId } = req.params;
+      const { symbol, timeframe, limit = 100 } = req.body;
+      
+      if (!symbol || !timeframe) {
+        return res.status(400).json({ error: "Symbol and timeframe are required" });
+      }
+      
+      // Get strategy to verify ownership
+      const strategy = await storage.getStrategy(strategyId);
+      if (!strategy || strategy.userId !== req.userId) {
+        return res.status(404).json({ error: "Strategy not found or access denied" });
+      }
+      
+      // Get OHLCV candles for pattern detection
+      const candles = await storage.getOHLCVCandles(symbol, timeframe, limit);
+      
+      if (candles.length < 30) {
+        return res.status(400).json({ 
+          error: "Insufficient data for pattern detection",
+          required: 30,
+          available: candles.length
+        });
+      }
+      
+      // Detect patterns
+      const detectedPatterns = await patternDetector.detectPatterns(
+        candles,
+        strategyId,
+        symbol,
+        timeframe
+      );
+      
+      // Save detected patterns to storage
+      const savedSignals = [];
+      for (const pattern of detectedPatterns) {
+        try {
+          const savedSignal = await storage.createPatternSignal(pattern);
+          savedSignals.push(savedSignal);
+          
+          // Broadcast pattern detection via WebSocket
+          wsService.broadcastPatternSignal(savedSignal);
+        } catch (error) {
+          console.error("Error saving pattern signal:", error);
+        }
+      }
+      
+      res.json({
+        patternsDetected: savedSignals.length,
+        patterns: savedSignals
+      });
+    } catch (error) {
+      console.error("Error detecting patterns:", error);
+      res.status(500).json({ error: "Failed to detect patterns" });
+    }
+  });
+
+  app.get("/api/patterns/signals/:strategyId", requireAuth, async (req: any, res) => {
+    try {
+      const { strategyId } = req.params;
+      const isActive = req.query.active === 'true' ? true : 
+                      req.query.active === 'false' ? false : undefined;
+      
+      // Verify strategy ownership
+      const strategy = await storage.getStrategy(strategyId);
+      if (!strategy || strategy.userId !== req.userId) {
+        return res.status(404).json({ error: "Strategy not found or access denied" });
+      }
+      
+      const signals = await storage.getPatternSignals(strategyId, isActive);
+      res.json(signals);
+    } catch (error) {
+      console.error("Error getting pattern signals:", error);
+      res.status(500).json({ error: "Failed to get pattern signals" });
+    }
+  });
+
+  app.get("/api/patterns/signals/symbol/:symbol", async (req, res) => {
+    try {
+      const { symbol } = req.params;
+      const patternType = req.query.type as string;
+      
+      const signals = await storage.getPatternSignalsBySymbol(symbol, patternType);
+      res.json(signals);
+    } catch (error) {
+      console.error("Error getting pattern signals by symbol:", error);
+      res.status(500).json({ error: "Failed to get pattern signals by symbol" });
+    }
+  });
+
+  app.get("/api/patterns/active", async (req, res) => {
+    try {
+      const activeSignals = await storage.getActivePatternSignals();
+      res.json(activeSignals);
+    } catch (error) {
+      console.error("Error getting active pattern signals:", error);
+      res.status(500).json({ error: "Failed to get active pattern signals" });
+    }
+  });
+
+  app.get("/api/patterns/analysis", requireAuth, async (req: any, res) => {
+    try {
+      const strategyId = req.query.strategyId as string;
+      
+      // If strategyId provided, verify ownership
+      if (strategyId) {
+        const strategy = await storage.getStrategy(strategyId);
+        if (!strategy || strategy.userId !== req.userId) {
+          return res.status(404).json({ error: "Strategy not found or access denied" });
+        }
+      }
+      
+      const analysis = await storage.getPatternAnalysis(strategyId);
+      res.json(analysis);
+    } catch (error) {
+      console.error("Error getting pattern analysis:", error);
+      res.status(500).json({ error: "Failed to get pattern analysis" });
+    }
+  });
+
+  app.put("/api/patterns/signals/:signalId", requireAuth, async (req: any, res) => {
+    try {
+      const { signalId } = req.params;
+      const updates = req.body;
+      
+      // Verify signal exists and get associated strategy
+      const signal = await storage.updatePatternSignal(signalId, updates);
+      if (!signal) {
+        return res.status(404).json({ error: "Pattern signal not found" });
+      }
+      
+      // Verify ownership through strategy
+      const strategy = await storage.getStrategy(signal.strategyId);
+      if (!strategy || strategy.userId !== req.userId) {
+        // Rollback the update
+        await storage.updatePatternSignal(signalId, updates);
+        return res.status(403).json({ error: "Access denied" });
+      }
+      
+      res.json(signal);
+    } catch (error) {
+      console.error("Error updating pattern signal:", error);
+      res.status(500).json({ error: "Failed to update pattern signal" });
+    }
+  });
+
+  // Bulk pattern detection for all active strategies
+  app.post("/api/patterns/detect-all", requireAuth, async (req: any, res) => {
+    try {
+      const { symbols, timeframe = '1h', limit = 100 } = req.body;
+      
+      if (!symbols || !Array.isArray(symbols) || symbols.length === 0) {
+        return res.status(400).json({ error: "Symbols array is required" });
+      }
+      
+      const activeStrategies = await storage.getActiveStrategies(req.userId);
+      if (activeStrategies.length === 0) {
+        return res.json({ message: "No active strategies found", patterns: [] });
+      }
+      
+      let totalPatternsDetected = 0;
+      const allDetectedPatterns = [];
+      
+      for (const strategy of activeStrategies) {
+        for (const symbol of symbols) {
+          try {
+            const candles = await storage.getOHLCVCandles(symbol, timeframe, limit);
+            if (candles.length < 30) continue;
+            
+            const patterns = await patternDetector.detectPatterns(
+              candles,
+              strategy.id,
+              symbol,
+              timeframe
+            );
+            
+            for (const pattern of patterns) {
+              const savedSignal = await storage.createPatternSignal(pattern);
+              allDetectedPatterns.push(savedSignal);
+              wsService.broadcastPatternSignal(savedSignal);
+              totalPatternsDetected++;
+            }
+          } catch (error) {
+            console.error(`Error processing ${symbol} for strategy ${strategy.name}:`, error);
+          }
+        }
+      }
+      
+      res.json({
+        strategiesProcessed: activeStrategies.length,
+        symbolsProcessed: symbols.length,
+        totalPatternsDetected,
+        patterns: allDetectedPatterns
+      });
+    } catch (error) {
+      console.error("Error in bulk pattern detection:", error);
+      res.status(500).json({ error: "Failed to perform bulk pattern detection" });
     }
   });
 
