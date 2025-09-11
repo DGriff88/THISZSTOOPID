@@ -83,6 +83,33 @@ export interface ThreeLineStrikeResult {
   };
 }
 
+export interface TrapResult {
+  isDetected: boolean;
+  confidence: number;  // 0-100
+  patternType: 'trap_bearish' | 'trap_bullish';
+  breakoutStart?: PatternPoint;   // Start of the strong breakout move
+  breakoutEnd?: PatternPoint;     // End of the breakout (fake out point)
+  reversalStart?: PatternPoint;   // Start of the reversal
+  reversalEnd?: PatternPoint;     // End of the reversal (current point)
+  supportResistanceLevel?: number; // Nearby support/resistance level
+  recentChopHigh?: number;        // High of recent consolidation broken
+  recentChopLow?: number;         // Low of recent consolidation broken
+  metadata: {
+    breakoutStrength: number;     // Strength of breakout vs recent moves (%)
+    breakoutVelocity: number;     // Velocity of breakout (price/time)
+    reversalVelocity: number;     // Velocity of reversal (price/time)
+    velocityRatio: number;        // Reversal velocity / breakout velocity
+    timeToReversal: number;       // Candles between breakout end and reversal start
+    breakoutDuration: number;     // Duration of breakout phase in candles
+    reversalDuration: number;     // Duration of reversal phase in candles
+    isBreakoutAbnormal: boolean;  // Whether breakout was stronger than normal trend
+    isReversalImmediate: boolean; // Whether reversal happened immediately after breakout
+    supportResistanceProximity: number; // Distance to nearest support/resistance (%)
+    chopBreakConfirmed: boolean;  // Whether recent chop/consolidation was broken
+    chopRange: number;            // Size of recent consolidation range (%)
+  };
+}
+
 export interface PatternDetectionConfig {
   minCandles: number;  // Minimum candles needed for detection
   lookbackPeriod: number;  // How far back to look for patterns
@@ -102,6 +129,16 @@ export interface PatternDetectionConfig {
   minReversalRatio: number;      // Minimum ratio of reversal to preceding movement
   minNegationRatio: number;      // Minimum ratio of movement that must be negated
   momentumExhaustionThreshold: number;  // Threshold for momentum exhaustion detection
+  // Trap pattern specific config
+  minBreakoutStrength: number;   // Minimum breakout strength vs recent moves (%)
+  minReversalVelocityRatio: number;  // Minimum reversal velocity ratio (reversal/breakout)
+  maxTimeToReversal: number;     // Maximum candles allowed between breakout and reversal
+  minChopBreakSize: number;      // Minimum size of chop/consolidation break (%)
+  maxSupportResistanceDistance: number;  // Maximum distance to support/resistance (%)
+  minBreakoutDuration: number;   // Minimum duration of breakout phase in candles
+  maxBreakoutDuration: number;   // Maximum duration of breakout phase in candles
+  trendAnalysisPeriod: number;   // Period for analyzing recent trend strength
+  chopDetectionPeriod: number;   // Period for detecting recent consolidation
 }
 
 export class HeadAndShouldersDetector {
@@ -129,6 +166,16 @@ export class HeadAndShouldersDetector {
       minReversalRatio: 0.8, // Reversal candle must be 80% of preceding movement
       minNegationRatio: 0.7, // Must negate at least 70% of preceding movement
       momentumExhaustionThreshold: 0.4, // 40% momentum exhaustion threshold
+      // Trap pattern specific defaults
+      minBreakoutStrength: 2.0, // 2% minimum breakout strength vs recent moves
+      minReversalVelocityRatio: 1.0, // Reversal must match breakout velocity
+      maxTimeToReversal: 3, // Max 3 candles between breakout and reversal
+      minChopBreakSize: 1.5, // 1.5% minimum chop break size
+      maxSupportResistanceDistance: 3.0, // Max 3% distance to support/resistance
+      minBreakoutDuration: 1, // Min 1 candle breakout duration
+      maxBreakoutDuration: 5, // Max 5 candles breakout duration
+      trendAnalysisPeriod: 20, // 20 candles for trend analysis
+      chopDetectionPeriod: 15, // 15 candles for chop detection
       ...config
     };
   }
@@ -371,6 +418,38 @@ export class HeadAndShouldersDetector {
       );
       detectedPatterns.push(signal);
       this.recordSignal(symbol, bullishStrikeResult.patternType, timeframe);
+    }
+
+    // Detect bearish trap patterns
+    const bearishTrapResult = this.detectBearishTrap(sortedCandles);
+    if (bearishTrapResult.isDetected && 
+        bearishTrapResult.confidence >= this.config.confidenceThreshold &&
+        !this.isDuplicateSignal(symbol, bearishTrapResult.patternType, timeframe)) {
+      const signal = this.createTrapSignal(
+        bearishTrapResult, 
+        strategyId, 
+        symbol, 
+        timeframe, 
+        sortedCandles
+      );
+      detectedPatterns.push(signal);
+      this.recordSignal(symbol, bearishTrapResult.patternType, timeframe);
+    }
+
+    // Detect bullish trap patterns
+    const bullishTrapResult = this.detectBullishTrap(sortedCandles);
+    if (bullishTrapResult.isDetected && 
+        bullishTrapResult.confidence >= this.config.confidenceThreshold &&
+        !this.isDuplicateSignal(symbol, bullishTrapResult.patternType, timeframe)) {
+      const signal = this.createTrapSignal(
+        bullishTrapResult, 
+        strategyId, 
+        symbol, 
+        timeframe, 
+        sortedCandles
+      );
+      detectedPatterns.push(signal);
+      this.recordSignal(symbol, bullishTrapResult.patternType, timeframe);
     }
 
     return detectedPatterns;
@@ -2412,6 +2491,615 @@ export class HeadAndShouldersDetector {
         detectionMethod: 'three_line_strike_momentum_analysis',
         candleCount: candles.length,
         description: `${result.patternType} pattern with ${result.metadata.negationRatio.toFixed(2)} negation ratio`
+      }
+    };
+  }
+
+  /**
+   * Detect bearish trap patterns
+   * Focus on strong upward breakout followed by immediate fast reversal
+   * Per Riley's specs: Strong move not normal in trend + fast reversal right after
+   */
+  private detectBearishTrap(candles: OHLCVCandles[]): TrapResult {
+    if (candles.length < this.config.minCandles) {
+      return this.createEmptyTrapResult('trap_bearish');
+    }
+
+    try {
+      // Look for potential trap patterns in recent candles
+      for (let i = candles.length - 1; i >= this.config.minBreakoutDuration + this.config.maxTimeToReversal; i--) {
+        const trapResult = this.analyzeBearishTrapAtPosition(candles, i);
+        if (trapResult.isDetected && trapResult.confidence >= this.config.confidenceThreshold) {
+          return trapResult;
+        }
+      }
+
+      return this.createEmptyTrapResult('trap_bearish');
+    } catch (error) {
+      console.warn(`Error detecting bearish trap: ${error}`);
+      return this.createEmptyTrapResult('trap_bearish');
+    }
+  }
+
+  /**
+   * Detect bullish trap patterns  
+   * Focus on strong downward breakout followed by immediate fast reversal
+   */
+  private detectBullishTrap(candles: OHLCVCandles[]): TrapResult {
+    if (candles.length < this.config.minCandles) {
+      return this.createEmptyTrapResult('trap_bullish');
+    }
+
+    try {
+      // Look for potential trap patterns in recent candles
+      for (let i = candles.length - 1; i >= this.config.minBreakoutDuration + this.config.maxTimeToReversal; i--) {
+        const trapResult = this.analyzeBullishTrapAtPosition(candles, i);
+        if (trapResult.isDetected && trapResult.confidence >= this.config.confidenceThreshold) {
+          return trapResult;
+        }
+      }
+
+      return this.createEmptyTrapResult('trap_bullish');
+    } catch (error) {
+      console.warn(`Error detecting bullish trap: ${error}`);
+      return this.createEmptyTrapResult('trap_bullish');
+    }
+  }
+
+  /**
+   * Analyze bearish trap pattern at specific position
+   * Strong upward breakout followed by fast downward reversal
+   */
+  private analyzeBearishTrapAtPosition(candles: OHLCVCandles[], currentIndex: number): TrapResult {
+    // Find recent consolidation/chop range  
+    const chopAnalysis = this.analyzeRecentChop(candles, currentIndex, true); // true for bearish
+    if (!chopAnalysis.hasValidChop) {
+      return this.createEmptyTrapResult('trap_bearish');
+    }
+
+    // Look for strong upward breakout through chop range
+    const breakoutAnalysis = this.findStrongBreakout(candles, chopAnalysis.chopEndIndex, currentIndex, true);
+    if (!breakoutAnalysis.hasBreakout) {
+      return this.createEmptyTrapResult('trap_bearish');
+    }
+
+    // Look for immediate fast reversal after breakout
+    const reversalAnalysis = this.findImmediateReversal(candles, breakoutAnalysis.breakoutEndIndex, currentIndex, true);
+    if (!reversalAnalysis.hasReversal) {
+      return this.createEmptyTrapResult('trap_bearish');
+    }
+
+    // Check if reversal velocity equals or exceeds breakout velocity (Riley's key requirement)
+    const velocityRatio = reversalAnalysis.reversalVelocity / breakoutAnalysis.breakoutVelocity;
+    if (velocityRatio < this.config.minReversalVelocityRatio) {
+      return this.createEmptyTrapResult('trap_bearish');
+    }
+
+    // Check proximity to support/resistance levels
+    const srProximity = this.calculateSupportResistanceProximity(candles, currentIndex, false); // false = resistance for bearish
+
+    // Calculate confidence based on Riley's criteria
+    const confidence = this.calculateTrapConfidence({
+      breakoutStrength: breakoutAnalysis.breakoutStrength,
+      velocityRatio,
+      timeToReversal: reversalAnalysis.timeToReversal,
+      isBreakoutAbnormal: breakoutAnalysis.isAbnormal,
+      supportResistanceProximity: srProximity.proximity,
+      chopBreakConfirmed: chopAnalysis.breakConfirmed,
+      chopRange: chopAnalysis.chopRange
+    });
+
+    return {
+      isDetected: confidence >= this.config.confidenceThreshold,
+      confidence,
+      patternType: 'trap_bearish',
+      breakoutStart: {
+        index: breakoutAnalysis.breakoutStartIndex,
+        price: this.safeParseFloat(candles[breakoutAnalysis.breakoutStartIndex].low),
+        timestamp: candles[breakoutAnalysis.breakoutStartIndex].timestamp,
+        volume: candles[breakoutAnalysis.breakoutStartIndex].volume,
+        isHigh: false
+      },
+      breakoutEnd: {
+        index: breakoutAnalysis.breakoutEndIndex,
+        price: this.safeParseFloat(candles[breakoutAnalysis.breakoutEndIndex].high),
+        timestamp: candles[breakoutAnalysis.breakoutEndIndex].timestamp,
+        volume: candles[breakoutAnalysis.breakoutEndIndex].volume,
+        isHigh: true
+      },
+      reversalStart: {
+        index: reversalAnalysis.reversalStartIndex,
+        price: this.safeParseFloat(candles[reversalAnalysis.reversalStartIndex].high),
+        timestamp: candles[reversalAnalysis.reversalStartIndex].timestamp,
+        volume: candles[reversalAnalysis.reversalStartIndex].volume,
+        isHigh: true
+      },
+      reversalEnd: {
+        index: currentIndex,
+        price: this.safeParseFloat(candles[currentIndex].low),
+        timestamp: candles[currentIndex].timestamp,
+        volume: candles[currentIndex].volume,
+        isHigh: false
+      },
+      supportResistanceLevel: srProximity.level,
+      recentChopHigh: chopAnalysis.chopHigh,
+      recentChopLow: chopAnalysis.chopLow,
+      metadata: {
+        breakoutStrength: breakoutAnalysis.breakoutStrength,
+        breakoutVelocity: breakoutAnalysis.breakoutVelocity,
+        reversalVelocity: reversalAnalysis.reversalVelocity,
+        velocityRatio,
+        timeToReversal: reversalAnalysis.timeToReversal,
+        breakoutDuration: breakoutAnalysis.breakoutEndIndex - breakoutAnalysis.breakoutStartIndex + 1,
+        reversalDuration: currentIndex - reversalAnalysis.reversalStartIndex + 1,
+        isBreakoutAbnormal: breakoutAnalysis.isAbnormal,
+        isReversalImmediate: reversalAnalysis.timeToReversal <= this.config.maxTimeToReversal,
+        supportResistanceProximity: srProximity.proximity,
+        chopBreakConfirmed: chopAnalysis.breakConfirmed,
+        chopRange: chopAnalysis.chopRange
+      }
+    };
+  }
+
+  /**
+   * Analyze bullish trap pattern at specific position
+   * Strong downward breakout followed by fast upward reversal
+   */
+  private analyzeBullishTrapAtPosition(candles: OHLCVCandles[], currentIndex: number): TrapResult {
+    // Find recent consolidation/chop range
+    const chopAnalysis = this.analyzeRecentChop(candles, currentIndex, false); // false for bullish
+    if (!chopAnalysis.hasValidChop) {
+      return this.createEmptyTrapResult('trap_bullish');
+    }
+
+    // Look for strong downward breakout through chop range
+    const breakoutAnalysis = this.findStrongBreakout(candles, chopAnalysis.chopEndIndex, currentIndex, false);
+    if (!breakoutAnalysis.hasBreakout) {
+      return this.createEmptyTrapResult('trap_bullish');
+    }
+
+    // Look for immediate fast reversal after breakout
+    const reversalAnalysis = this.findImmediateReversal(candles, breakoutAnalysis.breakoutEndIndex, currentIndex, false);
+    if (!reversalAnalysis.hasReversal) {
+      return this.createEmptyTrapResult('trap_bullish');
+    }
+
+    // Check if reversal velocity equals or exceeds breakout velocity
+    const velocityRatio = reversalAnalysis.reversalVelocity / breakoutAnalysis.breakoutVelocity;
+    if (velocityRatio < this.config.minReversalVelocityRatio) {
+      return this.createEmptyTrapResult('trap_bullish');
+    }
+
+    // Check proximity to support/resistance levels
+    const srProximity = this.calculateSupportResistanceProximity(candles, currentIndex, true); // true = support for bullish
+
+    // Calculate confidence
+    const confidence = this.calculateTrapConfidence({
+      breakoutStrength: breakoutAnalysis.breakoutStrength,
+      velocityRatio,
+      timeToReversal: reversalAnalysis.timeToReversal,
+      isBreakoutAbnormal: breakoutAnalysis.isAbnormal,
+      supportResistanceProximity: srProximity.proximity,
+      chopBreakConfirmed: chopAnalysis.breakConfirmed,
+      chopRange: chopAnalysis.chopRange
+    });
+
+    return {
+      isDetected: confidence >= this.config.confidenceThreshold,
+      confidence,
+      patternType: 'trap_bullish',
+      breakoutStart: {
+        index: breakoutAnalysis.breakoutStartIndex,
+        price: this.safeParseFloat(candles[breakoutAnalysis.breakoutStartIndex].high),
+        timestamp: candles[breakoutAnalysis.breakoutStartIndex].timestamp,
+        volume: candles[breakoutAnalysis.breakoutStartIndex].volume,
+        isHigh: true
+      },
+      breakoutEnd: {
+        index: breakoutAnalysis.breakoutEndIndex,
+        price: this.safeParseFloat(candles[breakoutAnalysis.breakoutEndIndex].low),
+        timestamp: candles[breakoutAnalysis.breakoutEndIndex].timestamp,
+        volume: candles[breakoutAnalysis.breakoutEndIndex].volume,
+        isHigh: false
+      },
+      reversalStart: {
+        index: reversalAnalysis.reversalStartIndex,
+        price: this.safeParseFloat(candles[reversalAnalysis.reversalStartIndex].low),
+        timestamp: candles[reversalAnalysis.reversalStartIndex].timestamp,
+        volume: candles[reversalAnalysis.reversalStartIndex].volume,
+        isHigh: false
+      },
+      reversalEnd: {
+        index: currentIndex,
+        price: this.safeParseFloat(candles[currentIndex].high),
+        timestamp: candles[currentIndex].timestamp,
+        volume: candles[currentIndex].volume,
+        isHigh: true
+      },
+      supportResistanceLevel: srProximity.level,
+      recentChopHigh: chopAnalysis.chopHigh,
+      recentChopLow: chopAnalysis.chopLow,
+      metadata: {
+        breakoutStrength: breakoutAnalysis.breakoutStrength,
+        breakoutVelocity: breakoutAnalysis.breakoutVelocity,
+        reversalVelocity: reversalAnalysis.reversalVelocity,
+        velocityRatio,
+        timeToReversal: reversalAnalysis.timeToReversal,
+        breakoutDuration: breakoutAnalysis.breakoutEndIndex - breakoutAnalysis.breakoutStartIndex + 1,
+        reversalDuration: currentIndex - reversalAnalysis.reversalStartIndex + 1,
+        isBreakoutAbnormal: breakoutAnalysis.isAbnormal,
+        isReversalImmediate: reversalAnalysis.timeToReversal <= this.config.maxTimeToReversal,
+        supportResistanceProximity: srProximity.proximity,
+        chopBreakConfirmed: chopAnalysis.breakConfirmed,
+        chopRange: chopAnalysis.chopRange
+      }
+    };
+  }
+
+  /**
+   * Analyze recent consolidation/chop patterns
+   * Riley's spec: Break the most recent chop before the trap
+   */
+  private analyzeRecentChop(candles: OHLCVCandles[], currentIndex: number, isBearish: boolean): {
+    hasValidChop: boolean;
+    chopStartIndex: number;
+    chopEndIndex: number;
+    chopHigh: number;
+    chopLow: number;
+    chopRange: number;
+    breakConfirmed: boolean;
+  } {
+    const lookbackStart = Math.max(0, currentIndex - this.config.chopDetectionPeriod);
+    
+    let chopHigh = -Infinity;
+    let chopLow = Infinity;
+    let chopStartIndex = lookbackStart;
+    let chopEndIndex = currentIndex - this.config.maxBreakoutDuration;
+
+    // Find the consolidation range
+    for (let i = lookbackStart; i <= chopEndIndex; i++) {
+      const high = this.safeParseFloat(candles[i].high);
+      const low = this.safeParseFloat(candles[i].low);
+      
+      if (high > chopHigh) chopHigh = high;
+      if (low < chopLow) chopLow = low;
+    }
+
+    const chopRange = ((chopHigh - chopLow) / chopLow) * 100;
+    
+    // Check if chop range meets minimum size
+    if (chopRange < this.config.minChopBreakSize) {
+      return {
+        hasValidChop: false,
+        chopStartIndex,
+        chopEndIndex,
+        chopHigh,
+        chopLow,
+        chopRange,
+        breakConfirmed: false
+      };
+    }
+
+    // Check if the breakout actually broke through the chop
+    let breakConfirmed = false;
+    for (let i = chopEndIndex + 1; i <= currentIndex; i++) {
+      const high = this.safeParseFloat(candles[i].high);
+      const low = this.safeParseFloat(candles[i].low);
+      
+      if (isBearish && high > chopHigh) {
+        breakConfirmed = true;
+        break;
+      } else if (!isBearish && low < chopLow) {
+        breakConfirmed = true;
+        break;
+      }
+    }
+
+    return {
+      hasValidChop: true,
+      chopStartIndex,
+      chopEndIndex,
+      chopHigh,
+      chopLow,
+      chopRange,
+      breakConfirmed
+    };
+  }
+
+  /**
+   * Find strong breakout that's abnormal compared to recent trend
+   * Riley's spec: Strong move not normal in current trend
+   */
+  private findStrongBreakout(candles: OHLCVCandles[], startIndex: number, endIndex: number, isBearish: boolean): {
+    hasBreakout: boolean;
+    breakoutStartIndex: number;
+    breakoutEndIndex: number;
+    breakoutStrength: number;
+    breakoutVelocity: number;
+    isAbnormal: boolean;
+  } {
+    // Analyze recent trend strength to determine what's "normal"
+    const trendAnalysis = this.analyzeTrendStrength(candles, Math.max(0, startIndex - this.config.trendAnalysisPeriod), startIndex);
+    
+    // Look for breakout moves within the specified range
+    for (let breakoutStart = startIndex; breakoutStart < endIndex - this.config.minBreakoutDuration; breakoutStart++) {
+      for (let breakoutEnd = breakoutStart + this.config.minBreakoutDuration; 
+           breakoutEnd <= Math.min(breakoutStart + this.config.maxBreakoutDuration, endIndex); 
+           breakoutEnd++) {
+        
+        const breakoutStrength = this.calculateMoveStrength(candles, breakoutStart, breakoutEnd, isBearish);
+        const breakoutVelocity = this.calculateMoveVelocity(candles, breakoutStart, breakoutEnd, isBearish);
+        
+        // Check if this breakout is stronger than normal trend
+        const isAbnormal = breakoutStrength > trendAnalysis.normalMoveSize * (1 + this.config.minBreakoutStrength / 100);
+        
+        if (isAbnormal && breakoutStrength >= this.config.minBreakoutStrength) {
+          return {
+            hasBreakout: true,
+            breakoutStartIndex: breakoutStart,
+            breakoutEndIndex: breakoutEnd,
+            breakoutStrength,
+            breakoutVelocity,
+            isAbnormal
+          };
+        }
+      }
+    }
+
+    return {
+      hasBreakout: false,
+      breakoutStartIndex: startIndex,
+      breakoutEndIndex: startIndex,
+      breakoutStrength: 0,
+      breakoutVelocity: 0,
+      isAbnormal: false
+    };
+  }
+
+  /**
+   * Find immediate reversal after breakout  
+   * Riley's spec: Reversal right after strong breakout, just as fast or faster
+   */
+  private findImmediateReversal(candles: OHLCVCandles[], breakoutEndIndex: number, currentIndex: number, isBearish: boolean): {
+    hasReversal: boolean;
+    reversalStartIndex: number;
+    reversalVelocity: number;
+    timeToReversal: number;
+  } {
+    // Look for reversal starting within maxTimeToReversal candles after breakout
+    for (let reversalStart = breakoutEndIndex; reversalStart <= Math.min(breakoutEndIndex + this.config.maxTimeToReversal, currentIndex - 1); reversalStart++) {
+      const timeToReversal = reversalStart - breakoutEndIndex;
+      const reversalVelocity = this.calculateMoveVelocity(candles, reversalStart, currentIndex, !isBearish); // Opposite direction
+      
+      if (reversalVelocity > 0) {
+        return {
+          hasReversal: true,
+          reversalStartIndex: reversalStart,
+          reversalVelocity,
+          timeToReversal
+        };
+      }
+    }
+
+    return {
+      hasReversal: false,
+      reversalStartIndex: breakoutEndIndex,
+      reversalVelocity: 0,
+      timeToReversal: this.config.maxTimeToReversal + 1
+    };
+  }
+
+  /**
+   * Calculate proximity to support/resistance levels
+   * Riley's spec: Near support/resistance but doesn't need to break major levels
+   */
+  private calculateSupportResistanceProximity(candles: OHLCVCandles[], currentIndex: number, isSupport: boolean): {
+    proximity: number;
+    level: number;
+  } {
+    const lookbackPeriod = Math.min(this.config.lookbackPeriod, currentIndex);
+    const currentPrice = isSupport ? 
+      this.safeParseFloat(candles[currentIndex].low) : 
+      this.safeParseFloat(candles[currentIndex].high);
+
+    // Find significant support/resistance levels
+    const levels: number[] = [];
+    
+    for (let i = Math.max(0, currentIndex - lookbackPeriod); i < currentIndex; i++) {
+      const high = this.safeParseFloat(candles[i].high);
+      const low = this.safeParseFloat(candles[i].low);
+      
+      if (isSupport) {
+        levels.push(low);
+      } else {
+        levels.push(high);
+      }
+    }
+
+    // Find the nearest level
+    let nearestLevel = levels[0];
+    let minDistance = Math.abs(currentPrice - nearestLevel);
+
+    for (const level of levels) {
+      const distance = Math.abs(currentPrice - level);
+      if (distance < minDistance) {
+        minDistance = distance;
+        nearestLevel = level;
+      }
+    }
+
+    const proximityPercentage = (minDistance / currentPrice) * 100;
+
+    return {
+      proximity: proximityPercentage,
+      level: nearestLevel
+    };
+  }
+
+  /**
+   * Analyze trend strength over a period to determine "normal" move size
+   */
+  private analyzeTrendStrength(candles: OHLCVCandles[], startIndex: number, endIndex: number): {
+    normalMoveSize: number;
+    averageVelocity: number;
+  } {
+    const moves: number[] = [];
+    const velocities: number[] = [];
+
+    for (let i = startIndex; i < endIndex - 1; i++) {
+      const moveSize = this.calculateMoveStrength(candles, i, i + 1, true); // Use bearish as default
+      const velocity = this.calculateMoveVelocity(candles, i, i + 1, true);
+      
+      moves.push(moveSize);
+      velocities.push(velocity);
+    }
+
+    const normalMoveSize = moves.length > 0 ? moves.reduce((a, b) => a + b, 0) / moves.length : 0;
+    const averageVelocity = velocities.length > 0 ? velocities.reduce((a, b) => a + b, 0) / velocities.length : 0;
+
+    return {
+      normalMoveSize,
+      averageVelocity
+    };
+  }
+
+  /**
+   * Calculate move strength (percentage change)
+   */
+  private calculateMoveStrength(candles: OHLCVCandles[], startIndex: number, endIndex: number, isBearish: boolean): number {
+    const startPrice = isBearish ? 
+      this.safeParseFloat(candles[startIndex].low) : 
+      this.safeParseFloat(candles[startIndex].high);
+    const endPrice = isBearish ? 
+      this.safeParseFloat(candles[endIndex].high) : 
+      this.safeParseFloat(candles[endIndex].low);
+
+    return Math.abs(((endPrice - startPrice) / startPrice) * 100);
+  }
+
+  /**
+   * Calculate move velocity (price change per candle)
+   */
+  private calculateMoveVelocity(candles: OHLCVCandles[], startIndex: number, endIndex: number, isBearish: boolean): number {
+    const moveStrength = this.calculateMoveStrength(candles, startIndex, endIndex, isBearish);
+    const duration = Math.max(1, endIndex - startIndex);
+    return moveStrength / duration;
+  }
+
+  /**
+   * Calculate confidence score for trap patterns
+   * Focus on Riley's key factors: breakout strength, velocity ratio, timing
+   */
+  private calculateTrapConfidence(factors: {
+    breakoutStrength: number;
+    velocityRatio: number;
+    timeToReversal: number;
+    isBreakoutAbnormal: boolean;
+    supportResistanceProximity: number;
+    chopBreakConfirmed: boolean;
+    chopRange: number;
+  }): number {
+    let confidence = 0;
+
+    // Breakout strength vs normal trend (max 25 points)
+    confidence += Math.min(factors.breakoutStrength * 2, 25);
+
+    // Velocity ratio - reversal should match or exceed breakout (max 25 points)
+    const velocityScore = Math.min(factors.velocityRatio * 25, 25);
+    confidence += velocityScore;
+
+    // Time to reversal - faster is better (max 20 points)
+    const timeScore = Math.max(0, 20 - (factors.timeToReversal * 5));
+    confidence += timeScore;
+
+    // Abnormal breakout bonus (15 points)
+    if (factors.isBreakoutAbnormal) {
+      confidence += 15;
+    }
+
+    // Support/resistance proximity (max 10 points)
+    const proximityScore = Math.max(0, 10 - factors.supportResistanceProximity);
+    confidence += proximityScore;
+
+    // Chop break confirmation (5 points)
+    if (factors.chopBreakConfirmed) {
+      confidence += 5;
+    }
+
+    return Math.min(100, Math.max(0, confidence));
+  }
+
+  /**
+   * Create empty trap result
+   */
+  private createEmptyTrapResult(patternType: 'trap_bearish' | 'trap_bullish'): TrapResult {
+    return {
+      isDetected: false,
+      confidence: 0,
+      patternType,
+      metadata: {
+        breakoutStrength: 0,
+        breakoutVelocity: 0,
+        reversalVelocity: 0,
+        velocityRatio: 0,
+        timeToReversal: 0,
+        breakoutDuration: 0,
+        reversalDuration: 0,
+        isBreakoutAbnormal: false,
+        isReversalImmediate: false,
+        supportResistanceProximity: 0,
+        chopBreakConfirmed: false,
+        chopRange: 0
+      }
+    };
+  }
+
+  /**
+   * Create pattern signal for trap patterns
+   */
+  private createTrapSignal(
+    result: TrapResult,
+    strategyId: string,
+    symbol: string,
+    timeframe: TimeframeType,
+    candles: OHLCVCandles[]
+  ): InsertPatternSignal {
+    const latestCandle = candles[candles.length - 1];
+    const currentPrice = this.safeParseFloat(latestCandle.close);
+
+    return {
+      strategyId,
+      symbol,
+      timeframe,
+      patternType: result.patternType,
+      confidence: result.confidence,
+      price: currentPrice.toString(),
+      detectedAt: latestCandle.timestamp,
+      metadata: {
+        ...result.metadata,
+        breakoutStart: result.breakoutStart ? {
+          index: result.breakoutStart.index,
+          price: result.breakoutStart.price,
+          timestamp: result.breakoutStart.timestamp.toISOString()
+        } : undefined,
+        breakoutEnd: result.breakoutEnd ? {
+          index: result.breakoutEnd.index,
+          price: result.breakoutEnd.price,
+          timestamp: result.breakoutEnd.timestamp.toISOString()
+        } : undefined,
+        reversalStart: result.reversalStart ? {
+          index: result.reversalStart.index,
+          price: result.reversalStart.price,
+          timestamp: result.reversalStart.timestamp.toISOString()
+        } : undefined,
+        reversalEnd: result.reversalEnd ? {
+          index: result.reversalEnd.index,
+          price: result.reversalEnd.price,
+          timestamp: result.reversalEnd.timestamp.toISOString()
+        } : undefined,
+        supportResistanceLevel: result.supportResistanceLevel,
+        recentChopHigh: result.recentChopHigh,
+        recentChopLow: result.recentChopLow
       }
     };
   }
