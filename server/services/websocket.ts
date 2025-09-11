@@ -236,6 +236,13 @@ export class TradingWebSocketService {
     }, 'strategies');
   }
 
+  public broadcastPatternSignal(signal: any): void {
+    this.broadcast({
+      type: 'pattern_signal',
+      data: { signal, timestamp: new Date().toISOString() }
+    }, 'patterns');
+  }
+
   public async stop(): Promise<void> {
     if (this.marketDataInterval) {
       clearInterval(this.marketDataInterval);

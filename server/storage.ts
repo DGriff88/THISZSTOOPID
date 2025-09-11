@@ -11,7 +11,13 @@ import {
   type InsertMarketData,
   type PortfolioSummary,
   type StrategyPerformance,
-  type RealTimeQuote
+  type RealTimeQuote,
+  type OHLCVCandles,
+  type InsertOHLCVCandles,
+  type PatternSignal,
+  type InsertPatternSignal,
+  type PatternAnalysisResponse,
+  type ActivePatternSignal
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -48,6 +54,19 @@ export interface IStorage {
   // Analytics methods
   getPortfolioSummary(userId: string): Promise<PortfolioSummary>;
   getStrategyPerformance(userId: string): Promise<StrategyPerformance[]>;
+
+  // OHLCV Candles methods
+  saveOHLCVCandles(candles: InsertOHLCVCandles[]): Promise<OHLCVCandles[]>;
+  getOHLCVCandles(symbol: string, timeframe: string, limit?: number): Promise<OHLCVCandles[]>;
+  getOHLCVCandlesInRange(symbol: string, timeframe: string, startTime: Date, endTime: Date): Promise<OHLCVCandles[]>;
+
+  // Pattern Signal methods
+  createPatternSignal(signal: InsertPatternSignal): Promise<PatternSignal>;
+  getPatternSignals(strategyId: string, isActive?: boolean): Promise<PatternSignal[]>;
+  getPatternSignalsBySymbol(symbol: string, patternType?: string): Promise<PatternSignal[]>;
+  updatePatternSignal(id: string, updates: Partial<PatternSignal>): Promise<PatternSignal | undefined>;
+  getActivePatternSignals(): Promise<ActivePatternSignal[]>;
+  getPatternAnalysis(strategyId?: string): Promise<PatternAnalysisResponse>;
 }
 
 export class MemStorage implements IStorage {
@@ -56,6 +75,8 @@ export class MemStorage implements IStorage {
   private trades: Map<string, Trade>;
   private portfolioSnapshots: Map<string, PortfolioSnapshot>;
   private marketData: Map<string, MarketData>;
+  private ohlcvCandles: Map<string, OHLCVCandles>;
+  private patternSignals: Map<string, PatternSignal>;
 
   constructor() {
     this.users = new Map();
@@ -63,6 +84,8 @@ export class MemStorage implements IStorage {
     this.trades = new Map();
     this.portfolioSnapshots = new Map();
     this.marketData = new Map();
+    this.ohlcvCandles = new Map();
+    this.patternSignals = new Map();
 
     // Initialize with a demo user
     this.initializeDemoData();
@@ -181,7 +204,8 @@ export class MemStorage implements IStorage {
       strategyId: insertTrade.strategyId || null,
       pnl: insertTrade.pnl || null,
       isPaperTrade: insertTrade.isPaperTrade ?? true,
-      alpacaOrderId: insertTrade.alpacaOrderId || null
+      alpacaOrderId: insertTrade.alpacaOrderId || null,
+      patternSignalId: insertTrade.patternSignalId || null
     };
     this.trades.set(id, trade);
     return trade;
@@ -293,6 +317,176 @@ export class MemStorage implements IStorage {
         isPaperTrading: strategy.isPaperTrading,
       };
     }));
+  }
+
+  // OHLCV Candles methods
+  async saveOHLCVCandles(insertCandles: InsertOHLCVCandles[]): Promise<OHLCVCandles[]> {
+    const candles: OHLCVCandles[] = [];
+    
+    for (const insertCandle of insertCandles) {
+      const id = randomUUID();
+      const candle: OHLCVCandles = {
+        ...insertCandle,
+        id,
+        open: insertCandle.open.toString(),
+        high: insertCandle.high.toString(),
+        low: insertCandle.low.toString(),
+        close: insertCandle.close.toString(),
+      };
+      
+      // Use symbol-timeframe-timestamp as key for uniqueness
+      const key = `${candle.symbol}-${candle.timeframe}-${candle.timestamp.getTime()}`;
+      this.ohlcvCandles.set(key, candle);
+      candles.push(candle);
+    }
+    
+    return candles;
+  }
+
+  async getOHLCVCandles(symbol: string, timeframe: string, limit: number = 100): Promise<OHLCVCandles[]> {
+    const symbolCandles = Array.from(this.ohlcvCandles.values())
+      .filter(candle => candle.symbol === symbol && candle.timeframe === timeframe)
+      .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
+      .slice(0, limit);
+    
+    return symbolCandles.reverse(); // Return in chronological order
+  }
+
+  async getOHLCVCandlesInRange(
+    symbol: string, 
+    timeframe: string, 
+    startTime: Date, 
+    endTime: Date
+  ): Promise<OHLCVCandles[]> {
+    return Array.from(this.ohlcvCandles.values())
+      .filter(candle => 
+        candle.symbol === symbol && 
+        candle.timeframe === timeframe &&
+        candle.timestamp >= startTime &&
+        candle.timestamp <= endTime
+      )
+      .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+  }
+
+  // Pattern Signal methods
+  async createPatternSignal(insertSignal: InsertPatternSignal): Promise<PatternSignal> {
+    const id = randomUUID();
+    const signal: PatternSignal = {
+      ...insertSignal,
+      id,
+      confidence: insertSignal.confidence.toString(),
+      priceLevel: insertSignal.priceLevel.toString(),
+      metadata: insertSignal.metadata || null,
+      createdAt: new Date(),
+      isActive: insertSignal.isActive ?? true
+    };
+    
+    this.patternSignals.set(id, signal);
+    return signal;
+  }
+
+  async getPatternSignals(strategyId: string, isActive?: boolean): Promise<PatternSignal[]> {
+    return Array.from(this.patternSignals.values())
+      .filter(signal => 
+        signal.strategyId === strategyId &&
+        (isActive === undefined || signal.isActive === isActive)
+      )
+      .sort((a, b) => b.detectedAt.getTime() - a.detectedAt.getTime());
+  }
+
+  async getPatternSignalsBySymbol(symbol: string, patternType?: string): Promise<PatternSignal[]> {
+    return Array.from(this.patternSignals.values())
+      .filter(signal => 
+        signal.symbol === symbol &&
+        (patternType === undefined || signal.patternType === patternType) &&
+        signal.isActive
+      )
+      .sort((a, b) => b.detectedAt.getTime() - a.detectedAt.getTime());
+  }
+
+  async updatePatternSignal(id: string, updates: Partial<PatternSignal>): Promise<PatternSignal | undefined> {
+    const signal = this.patternSignals.get(id);
+    if (!signal) return undefined;
+    
+    const updatedSignal = { ...signal, ...updates };
+    this.patternSignals.set(id, updatedSignal);
+    return updatedSignal;
+  }
+
+  async getActivePatternSignals(): Promise<ActivePatternSignal[]> {
+    const activeSignals = Array.from(this.patternSignals.values())
+      .filter(signal => signal.isActive)
+      .sort((a, b) => b.detectedAt.getTime() - a.detectedAt.getTime());
+
+    // Convert to ActivePatternSignal format with additional data
+    return Promise.all(activeSignals.map(async (signal) => {
+      const strategy = await this.getStrategy(signal.strategyId);
+      const latestPrice = await this.getLatestMarketData(signal.symbol);
+      
+      return {
+        id: signal.id,
+        symbol: signal.symbol,
+        patternType: signal.patternType,
+        confidence: parseFloat(signal.confidence),
+        detectedAt: signal.detectedAt,
+        priceLevel: parseFloat(signal.priceLevel),
+        currentPrice: latestPrice ? parseFloat(latestPrice.price) : parseFloat(signal.priceLevel),
+        priceChange: latestPrice ? 
+          ((parseFloat(latestPrice.price) - parseFloat(signal.priceLevel)) / parseFloat(signal.priceLevel)) * 100 : 0,
+        metadata: signal.metadata || {},
+        strategyName: strategy?.name || 'Unknown',
+        isActive: signal.isActive,
+      };
+    }));
+  }
+
+  async getPatternAnalysis(strategyId?: string): Promise<PatternAnalysisResponse> {
+    let relevantSignals = Array.from(this.patternSignals.values());
+    
+    if (strategyId) {
+      relevantSignals = relevantSignals.filter(signal => signal.strategyId === strategyId);
+    }
+
+    const activeSignals = relevantSignals.filter(signal => signal.isActive);
+    const patternTypeCounts = new Map<string, { count: number; totalConfidence: number }>();
+    
+    // Aggregate pattern type statistics
+    for (const signal of relevantSignals) {
+      const existing = patternTypeCounts.get(signal.patternType) || { count: 0, totalConfidence: 0 };
+      patternTypeCounts.set(signal.patternType, {
+        count: existing.count + 1,
+        totalConfidence: existing.totalConfidence + parseFloat(signal.confidence)
+      });
+    }
+
+    const patternTypes = Array.from(patternTypeCounts.entries()).map(([type, stats]) => ({
+      type,
+      count: stats.count,
+      averageConfidence: stats.totalConfidence / stats.count
+    }));
+
+    const activePatternSignals = await this.getActivePatternSignals();
+
+    return {
+      summary: {
+        totalPatterns: relevantSignals.length,
+        activePatterns: activeSignals.length,
+        patternTypes,
+        topPerformingPatterns: [] // Would need trade outcome data to calculate this
+      },
+      activeSignals: activePatternSignals,
+      performanceMetrics: [], // Would need historical performance data
+      recentPatterns: relevantSignals
+        .sort((a, b) => b.detectedAt.getTime() - a.detectedAt.getTime())
+        .slice(0, 10)
+        .map(signal => ({
+          symbol: signal.symbol,
+          patternType: signal.patternType,
+          detectedAt: signal.detectedAt,
+          confidence: parseFloat(signal.confidence),
+          outcome: 'pending' as const // Would need to track actual outcomes
+        }))
+    };
   }
 }
 
