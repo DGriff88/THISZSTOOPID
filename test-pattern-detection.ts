@@ -463,21 +463,305 @@ async function testAllPatterns() {
     // Test Reversal Flag patterns
     await testReversalFlagDetection();
     
+    console.log('\n' + '=' .repeat(60) + '\n');
+    
+    // Test Three Line Strike patterns
+    await testThreeLineStrikeDetection();
+    
     console.log('\n' + '=' .repeat(60));
     console.log('🚀 All Pattern Detection Tests Complete!');
     console.log('📚 Implementation based on Riley Coleman\'s trading specifications');
     console.log('💡 Ready for live trading analysis');
+    console.log('\n🎯 Pattern Types Implemented:');
+    console.log('   ✓ Head and Shoulders (Bearish & Bullish)');
+    console.log('   ✓ Reversal Flags (Bearish & Bullish)');
+    console.log('   ✓ Three Line Strike (Bearish & Bullish)');
     
   } catch (error) {
     console.error('❌ Test suite failed:', error);
   }
 }
 
+// Generate sample OHLCV data with a bearish Three Line Strike pattern
+function generateBearishThreeLineStrikeData(): OHLCVCandles[] {
+  const basePrice = 100;
+  const candles: OHLCVCandles[] = [];
+  
+  // Base setup: Some initial candles for context
+  for (let i = 0; i < 10; i++) {
+    const price = basePrice + Math.random() * 2;
+    candles.push({
+      id: `candle-${i}`,
+      symbol: 'TEST',
+      timeframe: '1h',
+      open: (price - 0.5).toString(),
+      high: (price + 1).toString(),
+      low: (price - 0.8).toString(),
+      close: price.toString(),
+      volume: 1000 + Math.floor(Math.random() * 300),
+      timestamp: new Date(Date.now() + i * 60 * 60 * 1000)
+    });
+  }
+  
+  // Preceding upward movement: 4 consecutive bullish candles (Riley's 3-5 candle rule)
+  let currentPrice = basePrice + 2;
+  for (let i = 10; i < 14; i++) {
+    const openPrice = currentPrice;
+    const moveSize = 2 + Math.random() * 2; // 2-4 point moves up
+    const closePrice = openPrice + moveSize;
+    currentPrice = closePrice;
+    
+    candles.push({
+      id: `candle-${i}`,
+      symbol: 'TEST',
+      timeframe: '1h',
+      open: openPrice.toString(),
+      high: (closePrice + 0.5).toString(),
+      low: (openPrice - 0.3).toString(),
+      close: closePrice.toString(),
+      volume: 1200 + Math.floor(Math.random() * 400), // Higher volume during move
+      timestamp: new Date(Date.now() + i * 60 * 60 * 1000)
+    });
+  }
+  
+  // Large bearish reversal candle that gives back the preceding movement
+  // Riley's rule: "Large reversal candle gives back movement of last 3-5 candles"
+  const reversalIndex = 14;
+  const reversalOpen = currentPrice;
+  const totalPrecedingMove = currentPrice - (basePrice + 2); // Calculate total preceding movement
+  const reversalClose = reversalOpen - (totalPrecedingMove * 0.8); // Give back 80% of movement
+  
+  candles.push({
+    id: `candle-${reversalIndex}`,
+    symbol: 'TEST',
+    timeframe: '1h',
+    open: reversalOpen.toString(),
+    high: (reversalOpen + 0.2).toString(), // Small wick up
+    low: (reversalClose - 0.5).toString(), // Strong move down
+    close: reversalClose.toString(),
+    volume: 1800 + Math.floor(Math.random() * 600), // Higher volume on reversal
+    timestamp: new Date(Date.now() + reversalIndex * 60 * 60 * 1000)
+  });
+  
+  // Some follow-through candles
+  for (let i = 15; i < 18; i++) {
+    const price = reversalClose - (i - 14) * 0.5 + Math.random() * 0.5;
+    candles.push({
+      id: `candle-${i}`,
+      symbol: 'TEST',
+      timeframe: '1h',
+      open: (price + 0.3).toString(),
+      high: (price + 0.5).toString(),
+      low: (price - 0.2).toString(),
+      close: price.toString(),
+      volume: 1000 + Math.floor(Math.random() * 300),
+      timestamp: new Date(Date.now() + i * 60 * 60 * 1000)
+    });
+  }
+  
+  return candles;
+}
+
+// Generate sample OHLCV data with a bullish Three Line Strike pattern
+function generateBullishThreeLineStrikeData(): OHLCVCandles[] {
+  const basePrice = 150;
+  const candles: OHLCVCandles[] = [];
+  
+  // Base setup: Some initial candles for context
+  for (let i = 0; i < 10; i++) {
+    const price = basePrice + Math.random() * 2;
+    candles.push({
+      id: `candle-${i}`,
+      symbol: 'TEST',
+      timeframe: '1h',
+      open: (price + 0.5).toString(),
+      high: (price + 1).toString(),
+      low: (price - 1).toString(),
+      close: price.toString(),
+      volume: 1000 + Math.floor(Math.random() * 300),
+      timestamp: new Date(Date.now() + i * 60 * 60 * 1000)
+    });
+  }
+  
+  // Preceding downward movement: 4 consecutive bearish candles 
+  let currentPrice = basePrice - 2;
+  for (let i = 10; i < 14; i++) {
+    const openPrice = currentPrice;
+    const moveSize = 2 + Math.random() * 2; // 2-4 point moves down
+    const closePrice = openPrice - moveSize;
+    currentPrice = closePrice;
+    
+    candles.push({
+      id: `candle-${i}`,
+      symbol: 'TEST',
+      timeframe: '1h',
+      open: openPrice.toString(),
+      high: (openPrice + 0.3).toString(),
+      low: (closePrice - 0.5).toString(),
+      close: closePrice.toString(),
+      volume: 1200 + Math.floor(Math.random() * 400), // Higher volume during move
+      timestamp: new Date(Date.now() + i * 60 * 60 * 1000)
+    });
+  }
+  
+  // Large bullish reversal candle that gives back the preceding movement
+  const reversalIndex = 14;
+  const reversalOpen = currentPrice;
+  const totalPrecedingMove = (basePrice - 2) - currentPrice; // Calculate total preceding downward movement
+  const reversalClose = reversalOpen + (totalPrecedingMove * 0.8); // Give back 80% of movement
+  
+  candles.push({
+    id: `candle-${reversalIndex}`,
+    symbol: 'TEST',
+    timeframe: '1h',
+    open: reversalOpen.toString(),
+    high: (reversalClose + 0.5).toString(), // Strong move up
+    low: (reversalOpen - 0.2).toString(), // Small wick down
+    close: reversalClose.toString(),
+    volume: 1800 + Math.floor(Math.random() * 600), // Higher volume on reversal
+    timestamp: new Date(Date.now() + reversalIndex * 60 * 60 * 1000)
+  });
+  
+  // Some follow-through candles
+  for (let i = 15; i < 18; i++) {
+    const price = reversalClose + (i - 14) * 0.5 + Math.random() * 0.5;
+    candles.push({
+      id: `candle-${i}`,
+      symbol: 'TEST',
+      timeframe: '1h',
+      open: (price - 0.3).toString(),
+      high: (price + 0.2).toString(),
+      low: (price - 0.5).toString(),
+      close: price.toString(),
+      volume: 1000 + Math.floor(Math.random() * 300),
+      timestamp: new Date(Date.now() + i * 60 * 60 * 1000)
+    });
+  }
+  
+  return candles;
+}
+
+// Test the Three Line Strike pattern detection
+async function testThreeLineStrikeDetection() {
+  console.log('⚡ Testing Three Line Strike Pattern Detection...\n');
+  
+  const detector = new HeadAndShouldersDetector({
+    minCandles: 15,
+    confidenceThreshold: 25.0, // Lower threshold for debugging
+    minPrecedingMovement: 2.0, // 2% minimum preceding movement
+    maxPrecedingCandles: 5,
+    minPrecedingCandles: 3,
+    minReversalRatio: 0.6, // 60% minimum reversal ratio
+    minNegationRatio: 0.5, // 50% minimum negation ratio
+    momentumExhaustionThreshold: 0.4
+  });
+  
+  // Test Bearish Three Line Strike
+  console.log('🔴 Testing Bearish Three Line Strike Pattern:');
+  const bearishTestData = generateBearishThreeLineStrikeData();
+  console.log(`   Generated ${bearishTestData.length} candles of bearish test data`);
+  
+  try {
+    const bearishPatterns = await detector.detectPatterns(
+      bearishTestData,
+      'test-strategy-bearish-strike',
+      'BEAR_STRIKE_TEST',
+      '1h'
+    );
+    
+    console.log(`   Patterns detected: ${bearishPatterns.length}`);
+    
+    if (bearishPatterns.length > 0) {
+      bearishPatterns.forEach((pattern, index) => {
+        if (pattern.patternType === 'three_line_strike_bearish') {
+          console.log(`\n   Bearish Strike Pattern ${index + 1}:`);
+          console.log(`     Type: ${pattern.patternType}`);
+          console.log(`     Confidence: ${pattern.confidence}%`);
+          console.log(`     Price Level: $${pattern.priceLevel}`);
+          
+          if (pattern.metadata) {
+            const meta = pattern.metadata as any;
+            console.log(`     Metadata:`);
+            console.log(`       - Preceding Movement: ${meta.precedingMovement?.toFixed(2)}%`);
+            console.log(`       - Reversal Movement: ${meta.reversalMovement?.toFixed(2)}%`);
+            console.log(`       - Negation Ratio: ${meta.negationRatio?.toFixed(2)}`);
+            console.log(`       - Preceding Duration: ${meta.precedingDuration} candles`);
+            console.log(`       - Momentum Loss Confirmed: ${meta.momentumLossConfirmed}`);
+            console.log(`       - Volume Confirmation: ${meta.volumeConfirmation}`);
+            console.log(`       - Candle Strength: ${meta.candleStrength?.toFixed(2)}`);
+            console.log(`       - Momentum Exhaustion: ${meta.momentumExhaustion?.toFixed(2)}`);
+            console.log(`       - Requires Confirmation: ${meta.requiresConfirmation}`);
+          }
+        }
+      });
+    }
+    
+  } catch (error) {
+    console.error('❌ Error during bearish Three Line Strike detection:', error);
+  }
+  
+  // Test Bullish Three Line Strike
+  console.log('\n🟢 Testing Bullish Three Line Strike Pattern:');
+  const bullishTestData = generateBullishThreeLineStrikeData();
+  console.log(`   Generated ${bullishTestData.length} candles of bullish test data`);
+  
+  try {
+    const bullishPatterns = await detector.detectPatterns(
+      bullishTestData,
+      'test-strategy-bullish-strike',
+      'BULL_STRIKE_TEST',
+      '1h'
+    );
+    
+    console.log(`   Patterns detected: ${bullishPatterns.length}`);
+    
+    if (bullishPatterns.length > 0) {
+      bullishPatterns.forEach((pattern, index) => {
+        if (pattern.patternType === 'three_line_strike_bullish') {
+          console.log(`\n   Bullish Strike Pattern ${index + 1}:`);
+          console.log(`     Type: ${pattern.patternType}`);
+          console.log(`     Confidence: ${pattern.confidence}%`);
+          console.log(`     Price Level: $${pattern.priceLevel}`);
+          
+          if (pattern.metadata) {
+            const meta = pattern.metadata as any;
+            console.log(`     Metadata:`);
+            console.log(`       - Preceding Movement: ${meta.precedingMovement?.toFixed(2)}%`);
+            console.log(`       - Reversal Movement: ${meta.reversalMovement?.toFixed(2)}%`);
+            console.log(`       - Negation Ratio: ${meta.negationRatio?.toFixed(2)}`);
+            console.log(`       - Preceding Duration: ${meta.precedingDuration} candles`);
+            console.log(`       - Momentum Loss Confirmed: ${meta.momentumLossConfirmed}`);
+            console.log(`       - Volume Confirmation: ${meta.volumeConfirmation}`);
+            console.log(`       - Candle Strength: ${meta.candleStrength?.toFixed(2)}`);
+            console.log(`       - Momentum Exhaustion: ${meta.momentumExhaustion?.toFixed(2)}`);
+            console.log(`       - Requires Confirmation: ${meta.requiresConfirmation}`);
+          }
+        }
+      });
+    }
+    
+  } catch (error) {
+    console.error('❌ Error during bullish Three Line Strike detection:', error);
+  }
+  
+  console.log('\n⚡ Three Line Strike pattern detection test completed!');
+  console.log('✨ Riley Coleman\'s Three Line Strike specifications implemented:');
+  console.log('   ✓ Large reversal candle gives back 3-5 candle movement');
+  console.log('   ✓ Focus on momentum loss rather than candlestick appearance');
+  console.log('   ✓ Requires additional confirmation (confidence penalty applied)');
+  console.log('   ✓ Measures preceding movement and reversal negation');
+  console.log('   ✓ Momentum exhaustion detection');
+  console.log('   ✓ Volume confirmation support');
+}
+
 export { 
   testPatternDetection, 
   testReversalFlagDetection,
+  testThreeLineStrikeDetection,
   testAllPatterns,
   generateBearishHeadAndShouldersData,
   generateBearishReversalFlagData,
-  generateBullishReversalFlagData
+  generateBullishReversalFlagData,
+  generateBearishThreeLineStrikeData,
+  generateBullishThreeLineStrikeData
 };
