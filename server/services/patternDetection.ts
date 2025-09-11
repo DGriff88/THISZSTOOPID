@@ -63,6 +63,26 @@ export interface ReversalFlagResult {
   };
 }
 
+export interface ThreeLineStrikeResult {
+  isDetected: boolean;
+  confidence: number;  // 0-100
+  patternType: 'three_line_strike_bearish' | 'three_line_strike_bullish';
+  precedingStart?: PatternPoint;  // Start of preceding movement
+  precedingEnd?: PatternPoint;    // End of preceding movement
+  reversalCandle?: PatternPoint;  // The large reversal candle
+  metadata: {
+    precedingMovement: number;    // Size of movement in preceding 3-5 candles (%)
+    reversalMovement: number;     // Size of reversal candle movement (%)
+    negationRatio: number;        // How much of preceding movement is negated (0-1)
+    precedingDuration: number;    // Number of candles in preceding movement
+    momentumLossConfirmed: boolean;  // Whether momentum loss is detected
+    volumeConfirmation: boolean;  // Volume supports the reversal
+    candleStrength: number;       // Strength of the reversal candle
+    momentumExhaustion: number;   // Measure of momentum exhaustion before reversal
+    requiresConfirmation: boolean; // Always true - pattern shouldn't be used alone
+  };
+}
+
 export interface PatternDetectionConfig {
   minCandles: number;  // Minimum candles needed for detection
   lookbackPeriod: number;  // How far back to look for patterns
@@ -75,6 +95,13 @@ export interface PatternDetectionConfig {
   minConsolidationDuration: number;  // Minimum consolidation duration in candles
   maxConsolidationDuration: number;  // Maximum consolidation duration in candles
   consolidationVolatilityThreshold: number;  // Maximum volatility during consolidation
+  // Three Line Strike specific config
+  minPrecedingMovement: number;  // Minimum preceding movement size in percentage
+  maxPrecedingCandles: number;   // Maximum candles to look back for preceding movement
+  minPrecedingCandles: number;   // Minimum candles to look back for preceding movement
+  minReversalRatio: number;      // Minimum ratio of reversal to preceding movement
+  minNegationRatio: number;      // Minimum ratio of movement that must be negated
+  momentumExhaustionThreshold: number;  // Threshold for momentum exhaustion detection
 }
 
 export class HeadAndShouldersDetector {
@@ -95,6 +122,13 @@ export class HeadAndShouldersDetector {
       minConsolidationDuration: 5, // Min 5 candles consolidation
       maxConsolidationDuration: 20, // Max 20 candles consolidation
       consolidationVolatilityThreshold: 2.0, // Max 2% volatility during consolidation
+      // Three Line Strike specific defaults
+      minPrecedingMovement: 3.0, // 3% minimum preceding movement
+      maxPrecedingCandles: 5, // Look back max 5 candles
+      minPrecedingCandles: 3, // Look back min 3 candles
+      minReversalRatio: 0.8, // Reversal candle must be 80% of preceding movement
+      minNegationRatio: 0.7, // Must negate at least 70% of preceding movement
+      momentumExhaustionThreshold: 0.4, // 40% momentum exhaustion threshold
       ...config
     };
   }
@@ -305,6 +339,38 @@ export class HeadAndShouldersDetector {
       );
       detectedPatterns.push(signal);
       this.recordSignal(symbol, bullishFlagResult.patternType, timeframe);
+    }
+
+    // Detect bearish Three Line Strike patterns
+    const bearishStrikeResult = this.detectBearishThreeLineStrike(sortedCandles);
+    if (bearishStrikeResult.isDetected && 
+        bearishStrikeResult.confidence >= this.config.confidenceThreshold &&
+        !this.isDuplicateSignal(symbol, bearishStrikeResult.patternType, timeframe)) {
+      const signal = this.createThreeLineStrikeSignal(
+        bearishStrikeResult, 
+        strategyId, 
+        symbol, 
+        timeframe, 
+        sortedCandles
+      );
+      detectedPatterns.push(signal);
+      this.recordSignal(symbol, bearishStrikeResult.patternType, timeframe);
+    }
+
+    // Detect bullish Three Line Strike patterns
+    const bullishStrikeResult = this.detectBullishThreeLineStrike(sortedCandles);
+    if (bullishStrikeResult.isDetected && 
+        bullishStrikeResult.confidence >= this.config.confidenceThreshold &&
+        !this.isDuplicateSignal(symbol, bullishStrikeResult.patternType, timeframe)) {
+      const signal = this.createThreeLineStrikeSignal(
+        bullishStrikeResult, 
+        strategyId, 
+        symbol, 
+        timeframe, 
+        sortedCandles
+      );
+      detectedPatterns.push(signal);
+      this.recordSignal(symbol, bullishStrikeResult.patternType, timeframe);
     }
 
     return detectedPatterns;
@@ -1756,5 +1822,597 @@ export class HeadAndShouldersDetector {
     }
 
     return totalMove > 0 ? adverseMove / totalMove : 1.0;
+  }
+
+  // Three Line Strike Pattern Detection Methods
+
+  /**
+   * Detect bearish Three Line Strike pattern
+   * Riley's rule: Large reversal candle gives back movement of last 3-5 candles
+   */
+  private detectBearishThreeLineStrike(candles: OHLCVCandles[]): ThreeLineStrikeResult {
+    // Need minimum candles for preceding movement + reversal candle
+    if (candles.length < this.config.minPrecedingCandles + 1) {
+      return this.createEmptyThreeLineStrikeResult('three_line_strike_bearish');
+    }
+
+    // Look for reversal candles starting from the most recent
+    for (let reversalIndex = this.config.minPrecedingCandles; reversalIndex < candles.length; reversalIndex++) {
+      const result = this.analyzeBearishThreeLineStrike(candles, reversalIndex);
+      if (result.isDetected) {
+        return result;
+      }
+    }
+
+    return this.createEmptyThreeLineStrikeResult('three_line_strike_bearish');
+  }
+
+  /**
+   * Detect bullish Three Line Strike pattern
+   * Inverted logic from bearish pattern
+   */
+  private detectBullishThreeLineStrike(candles: OHLCVCandles[]): ThreeLineStrikeResult {
+    if (candles.length < this.config.minPrecedingCandles + 1) {
+      return this.createEmptyThreeLineStrikeResult('three_line_strike_bullish');
+    }
+
+    for (let reversalIndex = this.config.minPrecedingCandles; reversalIndex < candles.length; reversalIndex++) {
+      const result = this.analyzeBullishThreeLineStrike(candles, reversalIndex);
+      if (result.isDetected) {
+        return result;
+      }
+    }
+
+    return this.createEmptyThreeLineStrikeResult('three_line_strike_bullish');
+  }
+
+  /**
+   * Analyze potential bearish Three Line Strike at given reversal candle index
+   * Focus: Large red candle gives back movement of preceding green candles
+   */
+  private analyzeBearishThreeLineStrike(
+    candles: OHLCVCandles[], 
+    reversalIndex: number
+  ): ThreeLineStrikeResult {
+    try {
+      const reversalCandle = candles[reversalIndex];
+      const reversalOpen = this.safeParseFloat(reversalCandle.open);
+      const reversalClose = this.safeParseFloat(reversalCandle.close);
+      const reversalHigh = this.safeParseFloat(reversalCandle.high);
+      const reversalLow = this.safeParseFloat(reversalCandle.low);
+
+      // Must be a bearish (red) candle
+      if (reversalClose >= reversalOpen) {
+        return this.createEmptyThreeLineStrikeResult('three_line_strike_bearish');
+      }
+
+      // Find optimal preceding movement window (3-5 candles)
+      let bestResult: ThreeLineStrikeResult | null = null;
+      let highestConfidence = 0;
+
+      for (let precedingDuration = this.config.minPrecedingCandles; 
+           precedingDuration <= Math.min(this.config.maxPrecedingCandles, reversalIndex); 
+           precedingDuration++) {
+        
+        const precedingStart = reversalIndex - precedingDuration;
+        const precedingEnd = reversalIndex - 1;
+
+        // Analyze the preceding movement
+        const precedingAnalysis = this.analyzePrecedingMovement(
+          candles, 
+          precedingStart, 
+          precedingEnd, 
+          true // isBearish pattern (expecting upward preceding movement)
+        );
+
+        if (precedingAnalysis.movementSize < this.config.minPrecedingMovement) {
+          continue; // Not enough preceding movement
+        }
+
+        // Calculate reversal strength
+        const reversalMovement = ((reversalOpen - reversalClose) / reversalOpen) * 100;
+        const negationRatio = reversalMovement / precedingAnalysis.movementSize;
+
+        if (negationRatio < this.config.minNegationRatio) {
+          continue; // Reversal doesn't give back enough movement
+        }
+
+        if (reversalMovement / precedingAnalysis.movementSize < this.config.minReversalRatio) {
+          continue; // Reversal candle not large enough relative to preceding movement
+        }
+
+        // Calculate momentum exhaustion
+        const momentumExhaustion = this.calculateMomentumExhaustion(
+          candles, 
+          precedingStart, 
+          precedingEnd
+        );
+
+        // Volume confirmation
+        const volumeConfirmation = this.checkReversalVolumeConfirmation(
+          candles, 
+          reversalIndex, 
+          precedingStart, 
+          precedingEnd
+        );
+
+        // Calculate candle strength (size relative to recent range)
+        const candleStrength = this.calculateCandleStrength(candles, reversalIndex);
+
+        // Calculate confidence
+        const confidence = this.calculateThreeLineStrikeConfidence({
+          precedingMovement: precedingAnalysis.movementSize,
+          reversalMovement,
+          negationRatio,
+          precedingDuration,
+          momentumExhaustion,
+          volumeConfirmation,
+          candleStrength,
+          momentumLossConfirmed: precedingAnalysis.momentumLoss
+        });
+
+        if (confidence > highestConfidence) {
+          highestConfidence = confidence;
+          bestResult = {
+            isDetected: confidence >= this.config.confidenceThreshold,
+            confidence,
+            patternType: 'three_line_strike_bearish',
+            precedingStart: {
+              index: precedingStart,
+              price: this.safeParseFloat(candles[precedingStart].low),
+              timestamp: candles[precedingStart].timestamp,
+              volume: candles[precedingStart].volume,
+              isHigh: false
+            },
+            precedingEnd: {
+              index: precedingEnd,
+              price: this.safeParseFloat(candles[precedingEnd].high),
+              timestamp: candles[precedingEnd].timestamp,
+              volume: candles[precedingEnd].volume,
+              isHigh: true
+            },
+            reversalCandle: {
+              index: reversalIndex,
+              price: reversalClose,
+              timestamp: reversalCandle.timestamp,
+              volume: reversalCandle.volume,
+              isHigh: false
+            },
+            metadata: {
+              precedingMovement: precedingAnalysis.movementSize,
+              reversalMovement,
+              negationRatio,
+              precedingDuration,
+              momentumLossConfirmed: precedingAnalysis.momentumLoss,
+              volumeConfirmation,
+              candleStrength,
+              momentumExhaustion,
+              requiresConfirmation: true
+            }
+          };
+        }
+      }
+
+      return bestResult || this.createEmptyThreeLineStrikeResult('three_line_strike_bearish');
+
+    } catch (error) {
+      console.warn(`Error analyzing bearish Three Line Strike at index ${reversalIndex}: ${error}`);
+      return this.createEmptyThreeLineStrikeResult('three_line_strike_bearish');
+    }
+  }
+
+  /**
+   * Analyze potential bullish Three Line Strike at given reversal candle index
+   * Focus: Large green candle gives back movement of preceding red candles
+   */
+  private analyzeBullishThreeLineStrike(
+    candles: OHLCVCandles[], 
+    reversalIndex: number
+  ): ThreeLineStrikeResult {
+    try {
+      const reversalCandle = candles[reversalIndex];
+      const reversalOpen = this.safeParseFloat(reversalCandle.open);
+      const reversalClose = this.safeParseFloat(reversalCandle.close);
+      const reversalHigh = this.safeParseFloat(reversalCandle.high);
+      const reversalLow = this.safeParseFloat(reversalCandle.low);
+
+      // Must be a bullish (green) candle
+      if (reversalClose <= reversalOpen) {
+        return this.createEmptyThreeLineStrikeResult('three_line_strike_bullish');
+      }
+
+      let bestResult: ThreeLineStrikeResult | null = null;
+      let highestConfidence = 0;
+
+      for (let precedingDuration = this.config.minPrecedingCandles; 
+           precedingDuration <= Math.min(this.config.maxPrecedingCandles, reversalIndex); 
+           precedingDuration++) {
+        
+        const precedingStart = reversalIndex - precedingDuration;
+        const precedingEnd = reversalIndex - 1;
+
+        // Analyze the preceding downward movement
+        const precedingAnalysis = this.analyzePrecedingMovement(
+          candles, 
+          precedingStart, 
+          precedingEnd, 
+          false // isBearish pattern (expecting downward preceding movement)
+        );
+
+        if (precedingAnalysis.movementSize < this.config.minPrecedingMovement) {
+          continue;
+        }
+
+        // Calculate reversal strength
+        const reversalMovement = ((reversalClose - reversalOpen) / reversalOpen) * 100;
+        const negationRatio = reversalMovement / precedingAnalysis.movementSize;
+
+        if (negationRatio < this.config.minNegationRatio) {
+          continue;
+        }
+
+        if (reversalMovement / precedingAnalysis.movementSize < this.config.minReversalRatio) {
+          continue;
+        }
+
+        const momentumExhaustion = this.calculateMomentumExhaustion(
+          candles, 
+          precedingStart, 
+          precedingEnd
+        );
+
+        const volumeConfirmation = this.checkReversalVolumeConfirmation(
+          candles, 
+          reversalIndex, 
+          precedingStart, 
+          precedingEnd
+        );
+
+        const candleStrength = this.calculateCandleStrength(candles, reversalIndex);
+
+        const confidence = this.calculateThreeLineStrikeConfidence({
+          precedingMovement: precedingAnalysis.movementSize,
+          reversalMovement,
+          negationRatio,
+          precedingDuration,
+          momentumExhaustion,
+          volumeConfirmation,
+          candleStrength,
+          momentumLossConfirmed: precedingAnalysis.momentumLoss
+        });
+
+        if (confidence > highestConfidence) {
+          highestConfidence = confidence;
+          bestResult = {
+            isDetected: confidence >= this.config.confidenceThreshold,
+            confidence,
+            patternType: 'three_line_strike_bullish',
+            precedingStart: {
+              index: precedingStart,
+              price: this.safeParseFloat(candles[precedingStart].high),
+              timestamp: candles[precedingStart].timestamp,
+              volume: candles[precedingStart].volume,
+              isHigh: true
+            },
+            precedingEnd: {
+              index: precedingEnd,
+              price: this.safeParseFloat(candles[precedingEnd].low),
+              timestamp: candles[precedingEnd].timestamp,
+              volume: candles[precedingEnd].volume,
+              isHigh: false
+            },
+            reversalCandle: {
+              index: reversalIndex,
+              price: reversalClose,
+              timestamp: reversalCandle.timestamp,
+              volume: reversalCandle.volume,
+              isHigh: true
+            },
+            metadata: {
+              precedingMovement: precedingAnalysis.movementSize,
+              reversalMovement,
+              negationRatio,
+              precedingDuration,
+              momentumLossConfirmed: precedingAnalysis.momentumLoss,
+              volumeConfirmation,
+              candleStrength,
+              momentumExhaustion,
+              requiresConfirmation: true
+            }
+          };
+        }
+      }
+
+      return bestResult || this.createEmptyThreeLineStrikeResult('three_line_strike_bullish');
+
+    } catch (error) {
+      console.warn(`Error analyzing bullish Three Line Strike at index ${reversalIndex}: ${error}`);
+      return this.createEmptyThreeLineStrikeResult('three_line_strike_bullish');
+    }
+  }
+
+  /**
+   * Analyze preceding movement in the given window
+   */
+  private analyzePrecedingMovement(
+    candles: OHLCVCandles[], 
+    startIndex: number, 
+    endIndex: number, 
+    expectingUpward: boolean
+  ): { movementSize: number; momentumLoss: boolean } {
+    if (startIndex >= endIndex || endIndex >= candles.length) {
+      return { movementSize: 0, momentumLoss: false };
+    }
+
+    let totalMovement = 0;
+    let favorableCandles = 0;
+    let totalCandles = endIndex - startIndex + 1;
+
+    // Calculate cumulative movement
+    for (let i = startIndex; i <= endIndex; i++) {
+      const open = this.safeParseFloat(candles[i].open);
+      const close = this.safeParseFloat(candles[i].close);
+      const candleMove = ((close - open) / open) * 100;
+
+      if (expectingUpward) {
+        // For bearish pattern, expect preceding upward movement
+        if (candleMove > 0) {
+          favorableCandles++;
+        }
+        totalMovement += candleMove;
+      } else {
+        // For bullish pattern, expect preceding downward movement
+        if (candleMove < 0) {
+          favorableCandles++;
+        }
+        totalMovement -= candleMove; // Make positive for easier comparison
+      }
+    }
+
+    // Check for momentum loss (declining movement toward the end)
+    const momentumLoss = this.detectMomentumLossInPrecedingMovement(
+      candles, 
+      startIndex, 
+      endIndex, 
+      expectingUpward
+    );
+
+    return {
+      movementSize: Math.abs(totalMovement),
+      momentumLoss
+    };
+  }
+
+  /**
+   * Detect momentum loss in preceding movement
+   * Riley's key: Look for signs of momentum exhaustion
+   */
+  private detectMomentumLossInPrecedingMovement(
+    candles: OHLCVCandles[], 
+    startIndex: number, 
+    endIndex: number, 
+    expectingUpward: boolean
+  ): boolean {
+    if (endIndex - startIndex < 2) return false;
+
+    const periodLength = endIndex - startIndex + 1;
+    const firstHalf = Math.floor(periodLength / 2);
+    const midPoint = startIndex + firstHalf;
+
+    let earlyMomentum = 0;
+    let lateMomentum = 0;
+
+    // Calculate momentum in first half
+    for (let i = startIndex; i < midPoint; i++) {
+      const open = this.safeParseFloat(candles[i].open);
+      const close = this.safeParseFloat(candles[i].close);
+      const move = ((close - open) / open) * 100;
+      earlyMomentum += expectingUpward ? move : -move;
+    }
+
+    // Calculate momentum in second half
+    for (let i = midPoint; i <= endIndex; i++) {
+      const open = this.safeParseFloat(candles[i].open);
+      const close = this.safeParseFloat(candles[i].close);
+      const move = ((close - open) / open) * 100;
+      lateMomentum += expectingUpward ? move : -move;
+    }
+
+    // Momentum loss if later period has significantly less momentum
+    return lateMomentum < earlyMomentum * this.config.momentumExhaustionThreshold;
+  }
+
+  /**
+   * Calculate momentum exhaustion score
+   */
+  private calculateMomentumExhaustion(
+    candles: OHLCVCandles[], 
+    startIndex: number, 
+    endIndex: number
+  ): number {
+    if (endIndex - startIndex < 2) return 0;
+
+    let exhaustionScore = 0;
+
+    // Check for decreasing candle sizes
+    const candleSizes: number[] = [];
+    for (let i = startIndex; i <= endIndex; i++) {
+      const high = this.safeParseFloat(candles[i].high);
+      const low = this.safeParseFloat(candles[i].low);
+      candleSizes.push(high - low);
+    }
+
+    // Calculate if candle sizes are decreasing
+    let decreasingCount = 0;
+    for (let i = 1; i < candleSizes.length; i++) {
+      if (candleSizes[i] < candleSizes[i - 1]) {
+        decreasingCount++;
+      }
+    }
+
+    exhaustionScore += (decreasingCount / (candleSizes.length - 1)) * 30;
+
+    // Check for volume decline
+    const volumes: number[] = [];
+    for (let i = startIndex; i <= endIndex; i++) {
+      volumes.push(candles[i].volume);
+    }
+
+    let volumeDeclineCount = 0;
+    for (let i = 1; i < volumes.length; i++) {
+      if (volumes[i] < volumes[i - 1]) {
+        volumeDeclineCount++;
+      }
+    }
+
+    exhaustionScore += (volumeDeclineCount / (volumes.length - 1)) * 20;
+
+    return Math.min(exhaustionScore, 50); // Max 50 points
+  }
+
+  /**
+   * Check volume confirmation for reversal candle
+   */
+  private checkReversalVolumeConfirmation(
+    candles: OHLCVCandles[], 
+    reversalIndex: number, 
+    precedingStart: number, 
+    precedingEnd: number
+  ): boolean {
+    const reversalVolume = candles[reversalIndex].volume;
+    const avgPrecedingVolume = this.calculateAverageVolume(candles, precedingStart, precedingEnd);
+    
+    return reversalVolume > avgPrecedingVolume * this.config.volumeThreshold;
+  }
+
+  /**
+   * Calculate candle strength relative to recent price range
+   */
+  private calculateCandleStrength(candles: OHLCVCandles[], candleIndex: number): number {
+    const candle = candles[candleIndex];
+    const open = this.safeParseFloat(candle.open);
+    const close = this.safeParseFloat(candle.close);
+    const high = this.safeParseFloat(candle.high);
+    const low = this.safeParseFloat(candle.low);
+
+    const candleRange = high - low;
+    const candleBody = Math.abs(close - open);
+
+    // Calculate relative to recent average range
+    const lookbackPeriod = Math.min(10, candleIndex);
+    let totalRange = 0;
+    for (let i = Math.max(0, candleIndex - lookbackPeriod); i < candleIndex; i++) {
+      const h = this.safeParseFloat(candles[i].high);
+      const l = this.safeParseFloat(candles[i].low);
+      totalRange += (h - l);
+    }
+
+    const avgRange = totalRange / lookbackPeriod;
+    return avgRange > 0 ? (candleBody / avgRange) * 100 : 0;
+  }
+
+  /**
+   * Calculate confidence score for Three Line Strike pattern
+   * Focus on Riley's requirement that it needs additional confirmation
+   */
+  private calculateThreeLineStrikeConfidence(factors: {
+    precedingMovement: number;
+    reversalMovement: number;
+    negationRatio: number;
+    precedingDuration: number;
+    momentumExhaustion: number;
+    volumeConfirmation: boolean;
+    candleStrength: number;
+    momentumLossConfirmed: boolean;
+  }): number {
+    let confidence = 0;
+
+    // Size of preceding movement (max 25 points)
+    confidence += Math.min(factors.precedingMovement * 2, 25);
+
+    // Negation ratio - how much movement is given back (max 20 points)
+    confidence += factors.negationRatio * 20;
+
+    // Reversal candle strength (max 15 points)
+    confidence += Math.min(factors.candleStrength * 0.3, 15);
+
+    // Momentum exhaustion before reversal (max 15 points)
+    confidence += Math.min(factors.momentumExhaustion * 0.3, 15);
+
+    // Volume confirmation (10 points)
+    if (factors.volumeConfirmation) {
+      confidence += 10;
+    }
+
+    // Momentum loss in preceding movement (10 points)
+    if (factors.momentumLossConfirmed) {
+      confidence += 10;
+    }
+
+    // Optimal preceding duration (5 points)
+    const optimalDuration = (this.config.minPrecedingCandles + this.config.maxPrecedingCandles) / 2;
+    const durationFactor = 1 - Math.abs(factors.precedingDuration - optimalDuration) / optimalDuration;
+    confidence += durationFactor * 5;
+
+    // Riley's requirement: This pattern shouldn't be used alone
+    // Reduce confidence to encourage additional confirmation
+    confidence *= 0.85; // 15% reduction to reflect need for confirmation
+
+    return Math.max(0, Math.min(100, confidence));
+  }
+
+  /**
+   * Create empty Three Line Strike result
+   */
+  private createEmptyThreeLineStrikeResult(
+    patternType: 'three_line_strike_bearish' | 'three_line_strike_bullish'
+  ): ThreeLineStrikeResult {
+    return {
+      isDetected: false,
+      confidence: 0,
+      patternType,
+      metadata: {
+        precedingMovement: 0,
+        reversalMovement: 0,
+        negationRatio: 0,
+        precedingDuration: 0,
+        momentumLossConfirmed: false,
+        volumeConfirmation: false,
+        candleStrength: 0,
+        momentumExhaustion: 0,
+        requiresConfirmation: true
+      }
+    };
+  }
+
+  /**
+   * Create pattern signal for Three Line Strike patterns
+   */
+  private createThreeLineStrikeSignal(
+    result: ThreeLineStrikeResult,
+    strategyId: string,
+    symbol: string,
+    timeframe: TimeframeType,
+    candles: OHLCVCandles[]
+  ): InsertPatternSignal {
+    const latestCandle = candles[candles.length - 1];
+    
+    return {
+      strategyId,
+      patternType: result.patternType,
+      symbol,
+      timeframe,
+      confidence: result.confidence,
+      detectedAt: latestCandle.timestamp,
+      metadata: {
+        ...result.metadata,
+        precedingStart: result.precedingStart,
+        precedingEnd: result.precedingEnd,
+        reversalCandle: result.reversalCandle,
+        detectionMethod: 'three_line_strike_momentum_analysis',
+        candleCount: candles.length,
+        description: `${result.patternType} pattern with ${result.metadata.negationRatio.toFixed(2)} negation ratio`
+      }
+    };
   }
 }
