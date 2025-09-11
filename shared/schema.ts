@@ -269,6 +269,23 @@ export const insertOHLCVCandlesSchema = createInsertSchema(ohlcvCandles).omit({
   volume: z.number().int().nonnegative("Volume must be a non-negative integer"),
 });
 
+export const insertPatternConfigSchema = z.object({
+  strategyId: z.string().min(1, "Strategy ID is required"),
+  patternType: patternTypeEnum,
+  config: z.record(z.any()).default({}),
+  isActive: z.boolean().default(true),
+});
+
+export const insertPatternOutcomeSchema = z.object({
+  patternSignalId: z.string().min(1, "Pattern signal ID is required"),
+  outcome: z.enum(['success', 'failure', 'timeout']),
+  profitLoss: z.number(),
+  holdTime: z.number().int().positive("Hold time must be a positive integer"),
+  exitReason: z.string().min(1, "Exit reason is required"),
+  exitPrice: z.number().positive("Exit price must be positive"),
+  metadata: z.record(z.any()).optional().default({}),
+});
+
 // Types
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
@@ -376,5 +393,61 @@ export interface PatternAnalysisResponse {
     detectedAt: Date;
     confidence: number;
     outcome?: 'pending' | 'success' | 'failure';
+  }>;
+}
+
+// Pattern Configuration Management
+export interface PatternConfig {
+  id: string;
+  strategyId: string;
+  patternType: string;
+  config: Record<string, any>; // PatternDetectionConfig subset
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export type InsertPatternConfig = z.infer<typeof insertPatternConfigSchema>;
+
+// Pattern Outcome Tracking
+export interface PatternOutcome {
+  id: string;
+  patternSignalId: string;
+  outcome: 'success' | 'failure' | 'timeout';
+  profitLoss: number;
+  holdTime: number; // in minutes
+  exitReason: string;
+  exitPrice: number;
+  recordedAt: Date;
+  metadata?: Record<string, any>;
+}
+
+export type InsertPatternOutcome = z.infer<typeof insertPatternOutcomeSchema>;
+
+// Enhanced Analytics
+export interface PatternBacktestRequest {
+  strategyId: string;
+  symbols: string[];
+  startDate: Date;
+  endDate: Date;
+  patternTypes?: string[];
+  config?: Record<string, any>;
+}
+
+export interface PatternBacktestResult {
+  totalSignals: number;
+  profitableSignals: number;
+  totalPnL: number;
+  winRate: number;
+  averageHoldTime: number;
+  maxDrawdown: number;
+  sharpeRatio: number;
+  signals: Array<{
+    symbol: string;
+    patternType: string;
+    detectedAt: Date;
+    outcome: 'success' | 'failure' | 'timeout';
+    pnl: number;
+    holdTime: number;
   }>;
 }
