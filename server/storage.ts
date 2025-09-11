@@ -17,7 +17,13 @@ import {
   type PatternSignal,
   type InsertPatternSignal,
   type PatternAnalysisResponse,
-  type ActivePatternSignal
+  type ActivePatternSignal,
+  type PatternConfig,
+  type InsertPatternConfig,
+  type PatternOutcome,
+  type InsertPatternOutcome,
+  type PatternBacktestRequest,
+  type PatternBacktestResult
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -67,6 +73,30 @@ export interface IStorage {
   updatePatternSignal(id: string, updates: Partial<PatternSignal>): Promise<PatternSignal | undefined>;
   getActivePatternSignals(): Promise<ActivePatternSignal[]>;
   getPatternAnalysis(strategyId?: string): Promise<PatternAnalysisResponse>;
+  getPatternSignalById(signalId: string): Promise<PatternSignal | undefined>;
+  getPatternSignalsByUser(userId: string): Promise<PatternSignal[]>;
+
+  // Pattern Configuration methods
+  createPatternConfig(config: InsertPatternConfig): Promise<PatternConfig>;
+  getPatternConfigs(strategyId: string): Promise<PatternConfig[]>;
+  getPatternConfig(strategyId: string, patternType: string): Promise<PatternConfig | undefined>;
+  updatePatternConfig(id: string, updates: Partial<PatternConfig>): Promise<PatternConfig | undefined>;
+  deletePatternConfig(id: string): Promise<boolean>;
+
+  // Pattern Outcome methods
+  createPatternOutcome(outcome: InsertPatternOutcome): Promise<PatternOutcome>;
+  getPatternOutcomes(patternSignalId: string): Promise<PatternOutcome[]>;
+  getPatternOutcomesByStrategy(strategyId: string): Promise<PatternOutcome[]>;
+  updatePatternOutcome(id: string, updates: Partial<PatternOutcome>): Promise<PatternOutcome | undefined>;
+
+  // Enhanced Analytics methods
+  getPatternPerformanceByType(patternType: string, strategyId?: string): Promise<PatternPerformanceMetrics>;
+  backtestPatterns(request: PatternBacktestRequest): Promise<PatternBacktestResult>;
+  
+  // Additional utility methods used in routes
+  getPatternConfigsByUser(userId: string): Promise<PatternConfig[]>;
+  createMultiplePatternSignals(signals: InsertPatternSignal[]): Promise<PatternSignal[]>;
+  getPatternSignalsInTimeRange(startDate: Date, endDate: Date, strategyId?: string, patternTypes?: string[]): Promise<PatternSignal[]>;
 }
 
 export class MemStorage implements IStorage {
@@ -77,6 +107,8 @@ export class MemStorage implements IStorage {
   private marketData: Map<string, MarketData>;
   private ohlcvCandles: Map<string, OHLCVCandles>;
   private patternSignals: Map<string, PatternSignal>;
+  private patternConfigs: Map<string, PatternConfig>;
+  private patternOutcomes: Map<string, PatternOutcome>;
 
   constructor() {
     this.users = new Map();
@@ -86,6 +118,8 @@ export class MemStorage implements IStorage {
     this.marketData = new Map();
     this.ohlcvCandles = new Map();
     this.patternSignals = new Map();
+    this.patternConfigs = new Map();
+    this.patternOutcomes = new Map();
 
     // Initialize with a demo user
     this.initializeDemoData();
@@ -394,6 +428,19 @@ export class MemStorage implements IStorage {
       .sort((a, b) => b.detectedAt.getTime() - a.detectedAt.getTime());
   }
 
+  async getPatternSignalById(signalId: string): Promise<PatternSignal | undefined> {
+    return this.patternSignals.get(signalId);
+  }
+
+  async getPatternSignalsByUser(userId: string): Promise<PatternSignal[]> {
+    const userStrategies = await this.getStrategies(userId);
+    const strategyIds = new Set(userStrategies.map(s => s.id));
+    
+    return Array.from(this.patternSignals.values())
+      .filter(signal => strategyIds.has(signal.strategyId))
+      .sort((a, b) => b.detectedAt.getTime() - a.detectedAt.getTime());
+  }
+
   async getPatternSignalsBySymbol(symbol: string, patternType?: string): Promise<PatternSignal[]> {
     return Array.from(this.patternSignals.values())
       .filter(signal => 
@@ -467,25 +514,294 @@ export class MemStorage implements IStorage {
 
     const activePatternSignals = await this.getActivePatternSignals();
 
+    // Get outcomes for performance metrics
+    const performanceMetrics = await Promise.all(
+      patternTypes.map(async ({ type }) => this.getPatternPerformanceByType(type, strategyId))
+    );
+
     return {
       summary: {
         totalPatterns: relevantSignals.length,
         activePatterns: activeSignals.length,
         patternTypes,
-        topPerformingPatterns: [] // Would need trade outcome data to calculate this
+        topPerformingPatterns: performanceMetrics
+          .sort((a, b) => b.successRate - a.successRate)
+          .slice(0, 5)
+          .map(p => ({
+            type: p.patternType,
+            successRate: p.successRate,
+            avgProfitLoss: p.averageProfitLoss
+          }))
       },
       activeSignals: activePatternSignals,
-      performanceMetrics: [], // Would need historical performance data
+      performanceMetrics,
       recentPatterns: relevantSignals
         .sort((a, b) => b.detectedAt.getTime() - a.detectedAt.getTime())
         .slice(0, 10)
-        .map(signal => ({
+        .map(signal => {
+          const outcomes = Array.from(this.patternOutcomes.values())
+            .filter(o => o.patternSignalId === signal.id);
+          const outcome = outcomes.length > 0 ? outcomes[0].outcome : 'pending';
+          
+          return {
+            symbol: signal.symbol,
+            patternType: signal.patternType,
+            detectedAt: signal.detectedAt,
+            confidence: parseFloat(signal.confidence),
+            outcome: outcome as any
+          };
+        })
+    };
+  }
+
+  // Pattern Configuration methods
+  async createPatternConfig(insertConfig: InsertPatternConfig): Promise<PatternConfig> {
+    const id = randomUUID();
+    const now = new Date();
+    const config: PatternConfig = {
+      ...insertConfig,
+      id,
+      isActive: insertConfig.isActive ?? true,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.patternConfigs.set(id, config);
+    return config;
+  }
+
+  async getPatternConfigs(strategyId: string): Promise<PatternConfig[]> {
+    return Array.from(this.patternConfigs.values())
+      .filter(config => config.strategyId === strategyId)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  }
+
+  async getPatternConfig(strategyId: string, patternType: string): Promise<PatternConfig | undefined> {
+    return Array.from(this.patternConfigs.values())
+      .find(config => config.strategyId === strategyId && config.patternType === patternType);
+  }
+
+  async updatePatternConfig(id: string, updates: Partial<PatternConfig>): Promise<PatternConfig | undefined> {
+    const config = this.patternConfigs.get(id);
+    if (!config) return undefined;
+    
+    const updatedConfig = { ...config, ...updates, updatedAt: new Date() };
+    this.patternConfigs.set(id, updatedConfig);
+    return updatedConfig;
+  }
+
+  async deletePatternConfig(id: string): Promise<boolean> {
+    return this.patternConfigs.delete(id);
+  }
+
+  // Optimized search method for pattern configs by user
+  async getPatternConfigsByUser(userId: string): Promise<PatternConfig[]> {
+    const userStrategies = await this.getStrategies(userId);
+    const strategyIds = new Set(userStrategies.map(s => s.id));
+    
+    return Array.from(this.patternConfigs.values())
+      .filter(config => strategyIds.has(config.strategyId))
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  }
+
+  // Pattern Outcome methods
+  async createPatternOutcome(insertOutcome: InsertPatternOutcome): Promise<PatternOutcome> {
+    const id = randomUUID();
+    const outcome: PatternOutcome = {
+      ...insertOutcome,
+      id,
+      recordedAt: new Date(),
+      metadata: insertOutcome.metadata || {}
+    };
+    this.patternOutcomes.set(id, outcome);
+    return outcome;
+  }
+
+  async getPatternOutcomes(patternSignalId: string): Promise<PatternOutcome[]> {
+    return Array.from(this.patternOutcomes.values())
+      .filter(outcome => outcome.patternSignalId === patternSignalId)
+      .sort((a, b) => b.recordedAt.getTime() - a.recordedAt.getTime());
+  }
+
+  async getPatternOutcomesByStrategy(strategyId: string): Promise<PatternOutcome[]> {
+    const strategySignals = await this.getPatternSignals(strategyId);
+    const signalIds = new Set(strategySignals.map(s => s.id));
+    
+    return Array.from(this.patternOutcomes.values())
+      .filter(outcome => signalIds.has(outcome.patternSignalId))
+      .sort((a, b) => b.recordedAt.getTime() - a.recordedAt.getTime());
+  }
+
+  async updatePatternOutcome(id: string, updates: Partial<PatternOutcome>): Promise<PatternOutcome | undefined> {
+    const outcome = this.patternOutcomes.get(id);
+    if (!outcome) return undefined;
+    
+    const updatedOutcome = { ...outcome, ...updates };
+    this.patternOutcomes.set(id, updatedOutcome);
+    return updatedOutcome;
+  }
+
+  // Batch operations for better performance
+  async createMultiplePatternSignals(signals: InsertPatternSignal[]): Promise<PatternSignal[]> {
+    const createdSignals: PatternSignal[] = [];
+    for (const signal of signals) {
+      const created = await this.createPatternSignal(signal);
+      createdSignals.push(created);
+    }
+    return createdSignals;
+  }
+
+  async getPatternSignalsInTimeRange(
+    startDate: Date, 
+    endDate: Date, 
+    strategyId?: string, 
+    patternTypes?: string[]
+  ): Promise<PatternSignal[]> {
+    return Array.from(this.patternSignals.values())
+      .filter(signal => {
+        const inTimeRange = signal.detectedAt >= startDate && signal.detectedAt <= endDate;
+        const matchesStrategy = !strategyId || signal.strategyId === strategyId;
+        const matchesPattern = !patternTypes || patternTypes.includes(signal.patternType);
+        return inTimeRange && matchesStrategy && matchesPattern;
+      })
+      .sort((a, b) => a.detectedAt.getTime() - b.detectedAt.getTime());
+  }
+
+  // Performance analytics caching for heavy computations
+  private performanceCache = new Map<string, { data: any; timestamp: Date; ttl: number }>();
+  private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+  private getCachedResult<T>(key: string): T | null {
+    const cached = this.performanceCache.get(key);
+    if (cached && (Date.now() - cached.timestamp.getTime()) < cached.ttl) {
+      return cached.data as T;
+    }
+    return null;
+  }
+
+  private setCachedResult<T>(key: string, data: T, ttl: number = this.CACHE_TTL): void {
+    this.performanceCache.set(key, {
+      data,
+      timestamp: new Date(),
+      ttl
+    });
+  }
+
+  // Enhanced Analytics methods
+  async getPatternPerformanceByType(patternType: string, strategyId?: string): Promise<PatternPerformanceMetrics> {
+    // Use caching for performance metrics
+    const cacheKey = `performance:${patternType}:${strategyId || 'all'}`;
+    const cached = this.getCachedResult<PatternPerformanceMetrics>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    let relevantSignals = Array.from(this.patternSignals.values())
+      .filter(signal => signal.patternType === patternType);
+    
+    if (strategyId) {
+      relevantSignals = relevantSignals.filter(signal => signal.strategyId === strategyId);
+    }
+
+    const signalIds = new Set(relevantSignals.map(s => s.id));
+    const outcomes = Array.from(this.patternOutcomes.values())
+      .filter(outcome => signalIds.has(outcome.patternSignalId));
+
+    const successfulOutcomes = outcomes.filter(o => o.outcome === 'success');
+    const totalProfitLoss = outcomes.reduce((sum, o) => sum + o.profitLoss, 0);
+    const averageHoldTime = outcomes.length > 0 
+      ? outcomes.reduce((sum, o) => sum + o.holdTime, 0) / outcomes.length / 60 // convert to hours
+      : 0;
+
+    // Calculate symbol performance
+    const symbolPnL = new Map<string, number>();
+    for (const outcome of outcomes) {
+      const signal = relevantSignals.find(s => s.id === outcome.patternSignalId);
+      if (signal) {
+        const current = symbolPnL.get(signal.symbol) || 0;
+        symbolPnL.set(signal.symbol, current + outcome.profitLoss);
+      }
+    }
+
+    const sortedSymbols = Array.from(symbolPnL.entries())
+      .sort((a, b) => b[1] - a[1]);
+
+    const result: PatternPerformanceMetrics = {
+      patternType,
+      totalSignals: relevantSignals.length,
+      successfulSignals: successfulOutcomes.length,
+      successRate: outcomes.length > 0 ? (successfulOutcomes.length / outcomes.length) * 100 : 0,
+      averageHoldTime,
+      totalProfitLoss,
+      averageProfitLoss: outcomes.length > 0 ? totalProfitLoss / outcomes.length : 0,
+      bestPerformingSymbol: sortedSymbols.length > 0 ? sortedSymbols[0][0] : '',
+      worstPerformingSymbol: sortedSymbols.length > 0 ? sortedSymbols[sortedSymbols.length - 1][0] : ''
+    };
+
+    // Cache the result
+    this.setCachedResult(cacheKey, result);
+    return result;
+  }
+
+  async backtestPatterns(request: PatternBacktestRequest): Promise<PatternBacktestResult> {
+    // This would be a comprehensive backtesting implementation
+    // For now, returning a basic structure with sample data
+    
+    const relevantSignals = Array.from(this.patternSignals.values())
+      .filter(signal => 
+        signal.strategyId === request.strategyId &&
+        request.symbols.includes(signal.symbol) &&
+        signal.detectedAt >= request.startDate &&
+        signal.detectedAt <= request.endDate &&
+        (!request.patternTypes || request.patternTypes.includes(signal.patternType))
+      );
+
+    const signalIds = new Set(relevantSignals.map(s => s.id));
+    const outcomes = Array.from(this.patternOutcomes.values())
+      .filter(outcome => signalIds.has(outcome.patternSignalId));
+
+    const profitableSignals = outcomes.filter(o => o.outcome === 'success').length;
+    const totalPnL = outcomes.reduce((sum, o) => sum + o.profitLoss, 0);
+    const averageHoldTime = outcomes.length > 0 
+      ? outcomes.reduce((sum, o) => sum + o.holdTime, 0) / outcomes.length
+      : 0;
+
+    // Calculate max drawdown (simplified)
+    let maxDrawdown = 0;
+    let runningPnL = 0;
+    let peak = 0;
+    for (const outcome of outcomes.sort((a, b) => a.recordedAt.getTime() - b.recordedAt.getTime())) {
+      runningPnL += outcome.profitLoss;
+      if (runningPnL > peak) peak = runningPnL;
+      const drawdown = (peak - runningPnL) / peak * 100;
+      if (drawdown > maxDrawdown) maxDrawdown = drawdown;
+    }
+
+    // Simplified Sharpe ratio calculation
+    const returns = outcomes.map(o => o.profitLoss);
+    const avgReturn = returns.length > 0 ? returns.reduce((a, b) => a + b, 0) / returns.length : 0;
+    const variance = returns.length > 1 
+      ? returns.reduce((sum, ret) => sum + Math.pow(ret - avgReturn, 2), 0) / (returns.length - 1)
+      : 0;
+    const sharpeRatio = variance > 0 ? avgReturn / Math.sqrt(variance) : 0;
+
+    return {
+      totalSignals: relevantSignals.length,
+      profitableSignals,
+      totalPnL,
+      winRate: outcomes.length > 0 ? (profitableSignals / outcomes.length) * 100 : 0,
+      averageHoldTime,
+      maxDrawdown,
+      sharpeRatio,
+      signals: outcomes.map(outcome => {
+        const signal = relevantSignals.find(s => s.id === outcome.patternSignalId)!;
+        return {
           symbol: signal.symbol,
           patternType: signal.patternType,
           detectedAt: signal.detectedAt,
-          confidence: parseFloat(signal.confidence),
-          outcome: 'pending' as const // Would need to track actual outcomes
-        }))
+          outcome: outcome.outcome,
+          pnl: outcome.profitLoss,
+          holdTime: outcome.holdTime
+        };
+      })
     };
   }
 }

@@ -9,8 +9,13 @@ import {
   insertTradeSchema, 
   insertOHLCVCandlesSchema,
   insertPatternSignalSchema,
+  insertPatternConfigSchema,
+  insertPatternOutcomeSchema,
   type OHLCVCandles,
-  type InsertOHLCVCandles
+  type InsertOHLCVCandles,
+  PATTERN_TYPES,
+  type PatternConfig,
+  type PatternOutcome
 } from "@shared/schema";
 import { z } from "zod";
 
@@ -92,7 +97,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put("/api/strategies/:id", requireAuth, async (req: any, res) => {
     try {
-      const strategy = await storage.updateStrategy(req.params.id, req.body);
+      // SECURITY: Verify ownership BEFORE updating
+      const existingStrategy = await storage.getStrategy(req.params.id);
+      if (!existingStrategy) {
+        return res.status(404).json({ error: "Strategy not found" });
+      }
+      
+      if (existingStrategy.userId !== req.userId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      // VALIDATION: Validate request body with Zod
+      const updates = req.body;
+      
+      // Validate specific fields if present
+      if (updates.type && !STRATEGY_TYPES.includes(updates.type)) {
+        return res.status(400).json({ error: "Invalid strategy type" });
+      }
+      
+      if (updates.symbols && (!Array.isArray(updates.symbols) || updates.symbols.length === 0)) {
+        return res.status(400).json({ error: "Symbols must be a non-empty array" });
+      }
+      
+      const strategy = await storage.updateStrategy(req.params.id, updates);
       if (!strategy) {
         return res.status(404).json({ error: "Strategy not found" });
       }
@@ -100,13 +127,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
       wsService.broadcastStrategyUpdate(strategy);
       res.json(strategy);
     } catch (error) {
-      console.error("Error updating strategy:", error);
-      res.status(500).json({ error: "Failed to update strategy" });
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: "Invalid strategy data", details: error.errors });
+      } else {
+        console.error("Error updating strategy:", error);
+        res.status(500).json({ error: "Failed to update strategy" });
+      }
     }
   });
 
   app.delete("/api/strategies/:id", requireAuth, async (req: any, res) => {
     try {
+      // SECURITY: Verify ownership BEFORE deleting
+      const existingStrategy = await storage.getStrategy(req.params.id);
+      if (!existingStrategy) {
+        return res.status(404).json({ error: "Strategy not found" });
+      }
+      
+      if (existingStrategy.userId !== req.userId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
       const deleted = await storage.deleteStrategy(req.params.id);
       if (!deleted) {
         return res.status(404).json({ error: "Strategy not found" });
@@ -228,6 +269,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(500).json({ error: "Alpaca API credentials not configured" });
       }
 
+      // VALIDATION: Basic validation for required fields
+      const { symbol, side, qty, type = 'market' } = req.body;
+      if (!symbol || !side || !qty) {
+        return res.status(400).json({ error: "Symbol, side, and quantity are required" });
+      }
+      
+      if (!['buy', 'sell'].includes(side)) {
+        return res.status(400).json({ error: "Side must be 'buy' or 'sell'" });
+      }
+
       const alpaca = getAlpacaService();
       const order = await alpaca.createOrder(req.body);
       
@@ -246,8 +297,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.json(order);
     } catch (error) {
-      console.error("Error creating Alpaca order:", error);
-      res.status(500).json({ error: "Failed to create order" });
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: "Invalid order data", details: error.errors });
+      } else {
+        console.error("Error creating Alpaca order:", error);
+        res.status(500).json({ error: "Failed to create order" });
+      }
     }
   });
 
@@ -468,24 +523,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { signalId } = req.params;
       const updates = req.body;
       
-      // Verify signal exists and get associated strategy
-      const signal = await storage.updatePatternSignal(signalId, updates);
-      if (!signal) {
+      // SECURITY: Verify signal exists and ownership BEFORE updating
+      const existingSignal = await storage.getPatternSignalById(signalId);
+      if (!existingSignal) {
         return res.status(404).json({ error: "Pattern signal not found" });
       }
       
       // Verify ownership through strategy
-      const strategy = await storage.getStrategy(signal.strategyId);
+      const strategy = await storage.getStrategy(existingSignal.strategyId);
       if (!strategy || strategy.userId !== req.userId) {
-        // Rollback the update
-        await storage.updatePatternSignal(signalId, updates);
         return res.status(403).json({ error: "Access denied" });
       }
       
-      res.json(signal);
+      // VALIDATION: Validate updates
+      if (updates.patternType && !PATTERN_TYPES.includes(updates.patternType)) {
+        return res.status(400).json({ error: "Invalid pattern type" });
+      }
+      
+      if (updates.confidence !== undefined && (updates.confidence < 0 || updates.confidence > 100)) {
+        return res.status(400).json({ error: "Confidence must be between 0 and 100" });
+      }
+      
+      // Now safely update
+      const updatedSignal = await storage.updatePatternSignal(signalId, updates);
+      if (!updatedSignal) {
+        return res.status(404).json({ error: "Failed to update pattern signal" });
+      }
+      
+      res.json(updatedSignal);
     } catch (error) {
-      console.error("Error updating pattern signal:", error);
-      res.status(500).json({ error: "Failed to update pattern signal" });
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: "Invalid pattern signal data", details: error.errors });
+      } else {
+        console.error("Error updating pattern signal:", error);
+        res.status(500).json({ error: "Failed to update pattern signal" });
+      }
     }
   });
 
@@ -540,6 +612,590 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error in bulk pattern detection:", error);
       res.status(500).json({ error: "Failed to perform bulk pattern detection" });
+    }
+  });
+
+  // Pattern Configuration Management endpoints
+  app.get("/api/patterns/configs/:strategyId", requireAuth, async (req: any, res) => {
+    try {
+      const { strategyId } = req.params;
+      
+      // Verify strategy ownership
+      const strategy = await storage.getStrategy(strategyId);
+      if (!strategy || strategy.userId !== req.userId) {
+        return res.status(404).json({ error: "Strategy not found or access denied" });
+      }
+      
+      const configs = await storage.getPatternConfigs(strategyId);
+      res.json(configs);
+    } catch (error) {
+      console.error("Error getting pattern configs:", error);
+      res.status(500).json({ error: "Failed to get pattern configs" });
+    }
+  });
+
+  app.post("/api/patterns/configs", requireAuth, async (req: any, res) => {
+    try {
+      // Validate request body first
+      const validatedData = insertPatternConfigSchema.parse(req.body);
+      
+      // Verify strategy ownership BEFORE creating config
+      const strategy = await storage.getStrategy(validatedData.strategyId);
+      if (!strategy || strategy.userId !== req.userId) {
+        return res.status(404).json({ error: "Strategy not found or access denied" });
+      }
+      
+      const patternConfig = await storage.createPatternConfig(validatedData);
+      
+      res.json(patternConfig);
+    } catch (error) {
+      console.error("Error creating pattern config:", error);
+      res.status(500).json({ error: "Failed to create pattern config" });
+    }
+  });
+
+  app.put("/api/patterns/configs/:configId", requireAuth, async (req: any, res) => {
+    try {
+      const { configId } = req.params;
+      
+      // Get config first to verify ownership BEFORE updating
+      const userConfigs = await storage.getPatternConfigsByUser(req.userId);
+      const existingConfig = userConfigs.find(c => c.id === configId);
+      if (!existingConfig) {
+        return res.status(404).json({ error: "Pattern config not found" });
+      }
+      
+      // Validate updates if pattern type is being changed
+      if (req.body.patternType && !PATTERN_TYPES.includes(req.body.patternType)) {
+        return res.status(400).json({ error: "Invalid pattern type" });
+      }
+      
+      const config = await storage.updatePatternConfig(configId, req.body);
+      if (!config) {
+        return res.status(404).json({ error: "Failed to update pattern config" });
+      }
+      
+      res.json(config);
+    } catch (error) {
+      console.error("Error updating pattern config:", error);
+      res.status(500).json({ error: "Failed to update pattern config" });
+    }
+  });
+
+  app.delete("/api/patterns/configs/:configId", requireAuth, async (req: any, res) => {
+    try {
+      const { configId } = req.params;
+      
+      // Get config to verify ownership using optimized method
+      const userConfigs = await storage.getPatternConfigsByUser(req.userId);
+      const config = userConfigs.find(c => c.id === configId);
+      if (!config) {
+        return res.status(404).json({ error: "Pattern config not found" });
+      }
+      
+      const strategy = await storage.getStrategy(config.strategyId);
+      if (!strategy || strategy.userId !== req.userId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      
+      const deleted = await storage.deletePatternConfig(configId);
+      if (!deleted) {
+        return res.status(404).json({ error: "Pattern config not found" });
+      }
+      
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting pattern config:", error);
+      res.status(500).json({ error: "Failed to delete pattern config" });
+    }
+  });
+
+  // Pattern Outcome Management endpoints
+  app.post("/api/patterns/outcomes", requireAuth, async (req: any, res) => {
+    try {
+      // Validate request body first
+      const validatedData = insertPatternOutcomeSchema.parse(req.body);
+      
+      // Verify signal exists and ownership BEFORE processing
+      const signal = await storage.getPatternSignalById(validatedData.patternSignalId);
+      if (!signal) {
+        return res.status(404).json({ error: "Pattern signal not found" });
+      }
+      
+      // Verify ownership through strategy
+      const strategy = await storage.getStrategy(signal.strategyId);
+      if (!strategy || strategy.userId !== req.userId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      
+      const patternOutcome = await storage.createPatternOutcome(validatedData);
+      
+      // Mark signal as inactive if outcome recorded
+      await storage.updatePatternSignal(patternSignalId, { isActive: false });
+      
+      res.json(patternOutcome);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: "Invalid pattern outcome data", details: error.errors });
+      } else {
+        console.error("Error creating pattern outcome:", error);
+        res.status(500).json({ error: "Failed to create pattern outcome" });
+      }
+    }
+  });
+
+  app.get("/api/patterns/outcomes/signal/:signalId", requireAuth, async (req: any, res) => {
+    try {
+      const { signalId } = req.params;
+      
+      // Verify signal ownership BEFORE processing
+      const signal = await storage.getPatternSignalById(signalId);
+      if (!signal) {
+        return res.status(404).json({ error: "Pattern signal not found" });
+      }
+      
+      const strategy = await storage.getStrategy(signal.strategyId);
+      if (!strategy || strategy.userId !== req.userId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      
+      const outcomes = await storage.getPatternOutcomes(signalId);
+      res.json(outcomes);
+    } catch (error) {
+      console.error("Error getting pattern outcomes:", error);
+      res.status(500).json({ error: "Failed to get pattern outcomes" });
+    }
+  });
+
+  app.get("/api/patterns/outcomes/strategy/:strategyId", requireAuth, async (req: any, res) => {
+    try {
+      const { strategyId } = req.params;
+      
+      // Verify strategy ownership
+      const strategy = await storage.getStrategy(strategyId);
+      if (!strategy || strategy.userId !== req.userId) {
+        return res.status(404).json({ error: "Strategy not found or access denied" });
+      }
+      
+      const outcomes = await storage.getPatternOutcomesByStrategy(strategyId);
+      res.json(outcomes);
+    } catch (error) {
+      console.error("Error getting pattern outcomes by strategy:", error);
+      res.status(500).json({ error: "Failed to get pattern outcomes" });
+    }
+  });
+
+  // Enhanced Analytics endpoints
+  app.get("/api/patterns/performance/:patternType", requireAuth, async (req: any, res) => {
+    try {
+      const { patternType } = req.params;
+      const { strategyId } = req.query;
+      
+      // Verify pattern type
+      if (!PATTERN_TYPES.includes(patternType as any)) {
+        return res.status(400).json({ error: "Invalid pattern type" });
+      }
+      
+      // If strategyId provided, verify ownership
+      if (strategyId) {
+        const strategy = await storage.getStrategy(strategyId as string);
+        if (!strategy || strategy.userId !== req.userId) {
+          return res.status(404).json({ error: "Strategy not found or access denied" });
+        }
+      }
+      
+      const performance = await storage.getPatternPerformanceByType(
+        patternType, 
+        strategyId as string
+      );
+      res.json(performance);
+    } catch (error) {
+      console.error("Error getting pattern performance:", error);
+      res.status(500).json({ error: "Failed to get pattern performance" });
+    }
+  });
+
+  app.post("/api/patterns/backtest", requireAuth, async (req: any, res) => {
+    try {
+      const { strategyId, symbols, startDate, endDate, patternTypes, config } = req.body;
+      
+      // Verify strategy ownership
+      const strategy = await storage.getStrategy(strategyId);
+      if (!strategy || strategy.userId !== req.userId) {
+        return res.status(404).json({ error: "Strategy not found or access denied" });
+      }
+      
+      // Validate dates
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+        return res.status(400).json({ error: "Invalid date format" });
+      }
+      
+      if (start >= end) {
+        return res.status(400).json({ error: "Start date must be before end date" });
+      }
+      
+      // Validate symbols
+      if (!symbols || !Array.isArray(symbols) || symbols.length === 0) {
+        return res.status(400).json({ error: "Symbols array is required" });
+      }
+      
+      const backtestResult = await storage.backtestPatterns({
+        strategyId,
+        symbols,
+        startDate: start,
+        endDate: end,
+        patternTypes: patternTypes || undefined,
+        config: config || {}
+      });
+      
+      res.json(backtestResult);
+    } catch (error) {
+      console.error("Error running pattern backtest:", error);
+      res.status(500).json({ error: "Failed to run pattern backtest" });
+    }
+  });
+
+  // Pattern Validation and Lifecycle Management endpoints
+  app.post("/api/patterns/validate", requireAuth, async (req: any, res) => {
+    try {
+      const { strategyId, symbol, timeframe, patternTypes } = req.body;
+      
+      // Verify strategy ownership
+      const strategy = await storage.getStrategy(strategyId);
+      if (!strategy || strategy.userId !== req.userId) {
+        return res.status(404).json({ error: "Strategy not found or access denied" });
+      }
+      
+      // Get recent candles for validation
+      const candles = await storage.getOHLCVCandles(symbol, timeframe, 100);
+      if (candles.length < 30) {
+        return res.status(400).json({ 
+          error: "Insufficient data for validation",
+          required: 30,
+          available: candles.length
+        });
+      }
+      
+      // Create detector with default config
+      const detector = new HeadAndShouldersDetector();
+      const validationResults = [];
+      
+      for (const patternType of (patternTypes || PATTERN_TYPES)) {
+        try {
+          // Get pattern-specific config if available
+          const config = await storage.getPatternConfig(strategyId, patternType);
+          const detectorConfig = config ? config.config : {};
+          
+          const patterns = await detector.detectPatterns(candles, strategyId, symbol, timeframe);
+          const relevantPatterns = patterns.filter(p => p.patternType === patternType);
+          
+          validationResults.push({
+            patternType,
+            isDetectable: relevantPatterns.length > 0,
+            confidence: relevantPatterns.length > 0 ? Math.max(...relevantPatterns.map(p => parseFloat(p.confidence))) : 0,
+            signals: relevantPatterns.length,
+            config: detectorConfig,
+            lastDetected: relevantPatterns.length > 0 ? relevantPatterns[0].detectedAt : null
+          });
+        } catch (error) {
+          validationResults.push({
+            patternType,
+            isDetectable: false,
+            error: String(error),
+            confidence: 0,
+            signals: 0
+          });
+        }
+      }
+      
+      res.json({
+        symbol,
+        timeframe,
+        candlesAnalyzed: candles.length,
+        validationResults,
+        timestamp: new Date()
+      });
+    } catch (error) {
+      console.error("Error validating patterns:", error);
+      res.status(500).json({ error: "Failed to validate patterns" });
+    }
+  });
+
+  app.post("/api/patterns/signals/bulk-update", requireAuth, async (req: any, res) => {
+    try {
+      const { signalIds, updates } = req.body;
+      
+      if (!signalIds || !Array.isArray(signalIds) || signalIds.length === 0) {
+        return res.status(400).json({ error: "Signal IDs array is required" });
+      }
+      
+      const results = [];
+      for (const signalId of signalIds) {
+        try {
+          // Verify ownership using optimized method
+          const signal = await storage.getPatternSignalById(signalId);
+          if (!signal) {
+            results.push({ signalId, error: "Signal not found" });
+            continue;
+          }
+          
+          const strategy = await storage.getStrategy(signal.strategyId);
+          if (!strategy || strategy.userId !== req.userId) {
+            results.push({ signalId, error: "Access denied" });
+            continue;
+          }
+          
+          const updatedSignal = await storage.updatePatternSignal(signalId, updates);
+          results.push({ signalId, signal: updatedSignal, success: true });
+          
+          // Broadcast update if signal was updated
+          if (updatedSignal) {
+            wsService.broadcastPatternSignal(updatedSignal);
+          }
+        } catch (error) {
+          results.push({ signalId, error: String(error) });
+        }
+      }
+      
+      res.json({
+        processed: signalIds.length,
+        successful: results.filter(r => r.success).length,
+        failed: results.filter(r => r.error).length,
+        results
+      });
+    } catch (error) {
+      console.error("Error in bulk signal update:", error);
+      res.status(500).json({ error: "Failed to perform bulk signal update" });
+    }
+  });
+
+  app.get("/api/patterns/dashboard/:strategyId", requireAuth, async (req: any, res) => {
+    try {
+      const { strategyId } = req.params;
+      
+      // Verify strategy ownership
+      const strategy = await storage.getStrategy(strategyId);
+      if (!strategy || strategy.userId !== req.userId) {
+        return res.status(404).json({ error: "Strategy not found or access denied" });
+      }
+      
+      // Get comprehensive dashboard data
+      const [
+        activeSignals,
+        recentOutcomes,
+        patternConfigs,
+        performanceMetrics
+      ] = await Promise.all([
+        storage.getPatternSignals(strategyId, true),
+        storage.getPatternOutcomesByStrategy(strategyId),
+        storage.getPatternConfigs(strategyId),
+        storage.getPatternAnalysis(strategyId)
+      ]);
+      
+      // Calculate strategy-specific metrics
+      const totalSignals = await storage.getPatternSignals(strategyId);
+      const recentSuccessRate = recentOutcomes.length > 0 
+        ? (recentOutcomes.filter(o => o.outcome === 'success').length / recentOutcomes.length) * 100
+        : 0;
+      
+      const totalPnL = recentOutcomes.reduce((sum, o) => sum + o.profitLoss, 0);
+      const avgHoldTime = recentOutcomes.length > 0
+        ? recentOutcomes.reduce((sum, o) => sum + o.holdTime, 0) / recentOutcomes.length / 60 // hours
+        : 0;
+      
+      // Pattern type distribution
+      const patternDistribution = new Map();
+      totalSignals.forEach(signal => {
+        const current = patternDistribution.get(signal.patternType) || 0;
+        patternDistribution.set(signal.patternType, current + 1);
+      });
+      
+      res.json({
+        strategy: {
+          id: strategy.id,
+          name: strategy.name,
+          isActive: strategy.isActive
+        },
+        metrics: {
+          totalSignals: totalSignals.length,
+          activeSignals: activeSignals.length,
+          recentSuccessRate,
+          totalPnL,
+          avgHoldTime,
+          configuredPatterns: patternConfigs.length
+        },
+        activeSignals: activeSignals.slice(0, 10), // Latest 10 active signals
+        recentOutcomes: recentOutcomes.slice(0, 10), // Latest 10 outcomes
+        patternDistribution: Array.from(patternDistribution.entries()).map(([type, count]) => ({
+          patternType: type,
+          count
+        })),
+        configurations: patternConfigs,
+        performanceByPattern: performanceMetrics.performanceMetrics,
+        lastUpdated: new Date()
+      });
+    } catch (error) {
+      console.error("Error getting pattern dashboard:", error);
+      res.status(500).json({ error: "Failed to get pattern dashboard" });
+    }
+  });
+
+  app.post("/api/patterns/alerts/configure", requireAuth, async (req: any, res) => {
+    try {
+      const { strategyId, alertConfig } = req.body;
+      
+      // Verify strategy ownership
+      const strategy = await storage.getStrategy(strategyId);
+      if (!strategy || strategy.userId !== req.userId) {
+        return res.status(404).json({ error: "Strategy not found or access denied" });
+      }
+      
+      // Create or update alert configuration
+      // This would integrate with a notification system in a full implementation
+      const updatedStrategy = await storage.updateStrategy(strategyId, {
+        parameters: {
+          ...strategy.parameters,
+          alertConfig: {
+            minConfidence: alertConfig.minConfidence || 65,
+            patterns: alertConfig.patterns || [],
+            webhookUrl: alertConfig.webhookUrl,
+            emailNotifications: alertConfig.emailNotifications || false,
+            ...alertConfig
+          }
+        }
+      });
+      
+      res.json({
+        success: true,
+        strategyId,
+        alertConfig: updatedStrategy?.parameters?.alertConfig,
+        message: "Alert configuration updated successfully"
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: "Invalid alert configuration", details: error.errors });
+      } else {
+        console.error("Error configuring pattern alerts:", error);
+        res.status(500).json({ error: "Failed to configure pattern alerts" });
+      }
+    }
+  });
+
+  // Comprehensive validation endpoint for all pattern types
+  app.post("/api/patterns/validate-all", requireAuth, async (req: any, res) => {
+    try {
+      const { strategyId, symbols, timeframes } = req.body;
+      
+      if (!symbols || !Array.isArray(symbols) || symbols.length === 0) {
+        return res.status(400).json({ error: "Symbols array is required" });
+      }
+      
+      if (!timeframes || !Array.isArray(timeframes) || timeframes.length === 0) {
+        return res.status(400).json({ error: "Timeframes array is required" });
+      }
+      
+      const strategy = await storage.getStrategy(strategyId);
+      if (!strategy || strategy.userId !== req.userId) {
+        return res.status(404).json({ error: "Strategy not found or access denied" });
+      }
+      
+      const detector = new HeadAndShouldersDetector();
+      const results = [];
+      
+      for (const symbol of symbols) {
+        for (const timeframe of timeframes) {
+          try {
+            const candles = await storage.getOHLCVCandles(symbol, timeframe, 100);
+            if (candles.length < 30) {
+              results.push({
+                symbol,
+                timeframe,
+                status: 'insufficient_data',
+                availableCandles: candles.length,
+                requiredCandles: 30,
+                patterns: []
+              });
+              continue;
+            }
+            
+            const patterns = await detector.detectPatterns(candles, strategyId, symbol, timeframe);
+            results.push({
+              symbol,
+              timeframe,
+              status: 'success',
+              availableCandles: candles.length,
+              patternsDetected: patterns.length,
+              patterns: patterns.map(p => ({
+                type: p.patternType,
+                confidence: parseFloat(p.confidence),
+                priceLevel: parseFloat(p.priceLevel)
+              }))
+            });
+          } catch (error) {
+            results.push({
+              symbol,
+              timeframe,
+              status: 'error',
+              error: String(error),
+              patterns: []
+            });
+          }
+        }
+      }
+      
+      res.json({
+        strategy: { id: strategy.id, name: strategy.name },
+        validationResults: results,
+        summary: {
+          totalCombinations: symbols.length * timeframes.length,
+          successful: results.filter(r => r.status === 'success').length,
+          errors: results.filter(r => r.status === 'error').length,
+          insufficientData: results.filter(r => r.status === 'insufficient_data').length,
+          totalPatterns: results.reduce((sum, r) => sum + (r.patternsDetected || 0), 0)
+        },
+        timestamp: new Date()
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: "Invalid validation request", details: error.errors });
+      } else {
+        console.error("Error in comprehensive pattern validation:", error);
+        res.status(500).json({ error: "Failed to validate patterns" });
+      }
+    }
+  });
+
+  // Health check endpoint for pattern detection system
+  app.get("/api/patterns/health", async (req, res) => {
+    try {
+      const health = {
+        status: 'healthy',
+        timestamp: new Date(),
+        services: {
+          patternDetection: 'operational',
+          storage: 'operational',
+          websocket: 'operational'
+        },
+        metrics: {
+          totalSignals: Array.from((storage as any).patternSignals?.values() || []).length,
+          activeSignals: Array.from((storage as any).patternSignals?.values() || []).filter((s: any) => s.isActive).length,
+          totalConfigs: Array.from((storage as any).patternConfigs?.values() || []).length,
+          totalOutcomes: Array.from((storage as any).patternOutcomes?.values() || []).length
+        },
+        supportedPatterns: PATTERN_TYPES,
+        supportedTimeframes: ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w']
+      };
+      
+      res.json(health);
+    } catch (error) {
+      console.error("Error in health check:", error);
+      res.status(500).json({ 
+        status: 'unhealthy',
+        error: "Health check failed",
+        timestamp: new Date()
+      });
     }
   });
 
