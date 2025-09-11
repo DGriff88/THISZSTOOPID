@@ -6,9 +6,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Separator } from "@/components/ui/separator";
+import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { type Strategy } from "@shared/schema";
+import { type Strategy, type PatternStrategyParameters } from "@shared/schema";
 
 interface StrategyModalProps {
   isOpen: boolean;
@@ -17,16 +19,53 @@ interface StrategyModalProps {
 }
 
 const strategyTypes = [
-  { value: 'moving_average', label: 'Moving Average Crossover' },
-  { value: 'rsi', label: 'RSI Oversold/Overbought' },
-  { value: 'bollinger_bands', label: 'Bollinger Bands' },
-  { value: 'macd', label: 'MACD Strategy' },
-  { value: 'custom', label: 'Custom Algorithm' },
+  // Traditional Technical Indicators
+  { value: 'moving_average', label: 'Moving Average Crossover', category: 'technical', description: 'Buy/sell when fast MA crosses slow MA' },
+  { value: 'rsi', label: 'RSI Oversold/Overbought', category: 'technical', description: 'Trade based on RSI oversold/overbought levels' },
+  { value: 'bollinger_bands', label: 'Bollinger Bands', category: 'technical', description: 'Trade when price touches or breaks bands' },
+  { value: 'macd', label: 'MACD Strategy', category: 'technical', description: 'MACD signal line crossovers and divergences' },
+  
+  // Chart Pattern Strategies
+  { value: 'head_shoulders_bearish', label: 'Head & Shoulders Bearish', category: 'pattern', description: 'Classic reversal pattern indicating downtrend' },
+  { value: 'head_shoulders_bullish', label: 'Head & Shoulders Bullish', category: 'pattern', description: 'Inverse H&S pattern indicating uptrend' },
+  { value: 'reversal_flag_bearish', label: 'Reversal Flag Bearish', category: 'pattern', description: 'Flag pattern with bearish reversal signal' },
+  { value: 'reversal_flag_bullish', label: 'Reversal Flag Bullish', category: 'pattern', description: 'Flag pattern with bullish reversal signal' },
+  { value: 'three_line_strike_bearish', label: 'Three Line Strike Bearish', category: 'pattern', description: 'Three consecutive candles followed by reversal' },
+  { value: 'three_line_strike_bullish', label: 'Three Line Strike Bullish', category: 'pattern', description: 'Three consecutive candles followed by reversal' },
+  { value: 'trap_bearish', label: 'Trap Bearish', category: 'pattern', description: 'False breakout trap indicating reversal down' },
+  { value: 'trap_bullish', label: 'Trap Bullish', category: 'pattern', description: 'False breakout trap indicating reversal up' },
+  { value: 'reversal_candlestick', label: 'Reversal Candlestick Patterns', category: 'pattern', description: 'Various candlestick reversal patterns' },
+  { value: 'common_trading_patterns', label: 'Common Trading Patterns', category: 'pattern', description: 'Collection of frequently used patterns' },
+  
+  // Custom
+  { value: 'custom', label: 'Custom Algorithm', category: 'custom', description: 'User-defined custom strategy' },
 ];
+
+const timeframeOptions = [
+  { value: '1m', label: '1 minute' },
+  { value: '5m', label: '5 minutes' },
+  { value: '15m', label: '15 minutes' },
+  { value: '30m', label: '30 minutes' },
+  { value: '1h', label: '1 hour' },
+  { value: '4h', label: '4 hours' },
+  { value: '1d', label: '1 day' },
+  { value: '1w', label: '1 week' },
+];
+
+// Type guard to check if parameters contain pattern configuration
+function getPatternParams(parameters: any): PatternStrategyParameters {
+  if (!parameters || typeof parameters !== 'object') {
+    return {};
+  }
+  return parameters as PatternStrategyParameters;
+}
 
 export default function StrategyModal({ isOpen, onClose, strategy }: StrategyModalProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  
+  // Extract pattern parameters safely
+  const patternParams = getPatternParams(strategy?.parameters);
   
   const [formData, setFormData] = useState({
     name: strategy?.name || '',
@@ -38,17 +77,34 @@ export default function StrategyModal({ isOpen, onClose, strategy }: StrategyMod
     takeProfit: strategy?.takeProfit || '4.0',
     isPaperTrading: strategy?.isPaperTrading ?? true,
     isActive: strategy?.isActive ?? false,
+    // Pattern-specific configuration
+    confidenceThreshold: patternParams.confidenceThreshold?.toString() || '75',
+    timeframe: patternParams.timeframe || '1h',
+    minPatternSize: patternParams.minPatternSize?.toString() || '10',
+    maxPatternAge: patternParams.maxPatternAge?.toString() || '24',
+    rejectionCandleSize: patternParams.rejectionCandleSize?.toString() || '0.5',
+    poleSize: patternParams.poleSize?.toString() || '2.0',
   });
 
   const createMutation = useMutation({
     mutationFn: async (data: any) => {
+      const isPatternStrategy = strategyTypes.find(t => t.value === data.type && t.category === 'pattern');
+      const parameters = isPatternStrategy ? {
+        confidenceThreshold: parseFloat(data.confidenceThreshold),
+        timeframe: data.timeframe,
+        minPatternSize: parseFloat(data.minPatternSize),
+        maxPatternAge: parseFloat(data.maxPatternAge),
+        rejectionCandleSize: parseFloat(data.rejectionCandleSize),
+        poleSize: parseFloat(data.poleSize),
+      } : {};
+
       const response = await apiRequest('POST', '/api/strategies', {
         ...data,
         symbols: data.symbols.split(',').map((s: string) => s.trim()).filter(Boolean),
         positionSize: parseFloat(data.positionSize),
         stopLoss: data.stopLoss ? parseFloat(data.stopLoss) : null,
         takeProfit: data.takeProfit ? parseFloat(data.takeProfit) : null,
-        parameters: {}, // Default empty parameters
+        parameters,
       });
       return response.json();
     },
@@ -72,12 +128,23 @@ export default function StrategyModal({ isOpen, onClose, strategy }: StrategyMod
 
   const updateMutation = useMutation({
     mutationFn: async (data: any) => {
+      const isPatternStrategy = strategyTypes.find(t => t.value === data.type && t.category === 'pattern');
+      const parameters = isPatternStrategy ? {
+        confidenceThreshold: parseFloat(data.confidenceThreshold),
+        timeframe: data.timeframe,
+        minPatternSize: parseFloat(data.minPatternSize),
+        maxPatternAge: parseFloat(data.maxPatternAge),
+        rejectionCandleSize: parseFloat(data.rejectionCandleSize),
+        poleSize: parseFloat(data.poleSize),
+      } : {};
+
       const response = await apiRequest('PUT', `/api/strategies/${strategy?.id}`, {
         ...data,
         symbols: data.symbols.split(',').map((s: string) => s.trim()).filter(Boolean),
         positionSize: parseFloat(data.positionSize),
         stopLoss: data.stopLoss ? parseFloat(data.stopLoss) : null,
         takeProfit: data.takeProfit ? parseFloat(data.takeProfit) : null,
+        parameters,
       });
       return response.json();
     },
@@ -113,6 +180,14 @@ export default function StrategyModal({ isOpen, onClose, strategy }: StrategyMod
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
+  const isPatternStrategy = (type: string) => {
+    return strategyTypes.find(t => t.value === type && t.category === 'pattern');
+  };
+
+  const getSelectedStrategy = () => {
+    return strategyTypes.find(t => t.value === formData.type);
+  };
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -142,13 +217,60 @@ export default function StrategyModal({ isOpen, onClose, strategy }: StrategyMod
                 <SelectValue placeholder="Select strategy type" />
               </SelectTrigger>
               <SelectContent>
-                {strategyTypes.map((type) => (
-                  <SelectItem key={type.value} value={type.value}>
-                    {type.label}
-                  </SelectItem>
-                ))}
+                {/* Technical Indicators Group */}
+                <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
+                  Technical Indicators
+                </div>
+                {strategyTypes
+                  .filter(type => type.category === 'technical')
+                  .map((type) => (
+                    <SelectItem key={type.value} value={type.value}>
+                      <div>
+                        <div className="font-medium">{type.label}</div>
+                        <div className="text-xs text-muted-foreground">{type.description}</div>
+                      </div>
+                    </SelectItem>
+                  ))}
+                
+                {/* Pattern-Based Strategies Group */}
+                <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground border-t mt-1 pt-2">
+                  Pattern-Based Strategies
+                </div>
+                {strategyTypes
+                  .filter(type => type.category === 'pattern')
+                  .map((type) => (
+                    <SelectItem key={type.value} value={type.value}>
+                      <div>
+                        <div className="font-medium flex items-center gap-2">
+                          {type.label}
+                          <Badge variant="outline" className="text-xs">Pattern</Badge>
+                        </div>
+                        <div className="text-xs text-muted-foreground">{type.description}</div>
+                      </div>
+                    </SelectItem>
+                  ))}
+                
+                {/* Custom Group */}
+                <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground border-t mt-1 pt-2">
+                  Custom
+                </div>
+                {strategyTypes
+                  .filter(type => type.category === 'custom')
+                  .map((type) => (
+                    <SelectItem key={type.value} value={type.value}>
+                      <div>
+                        <div className="font-medium">{type.label}</div>
+                        <div className="text-xs text-muted-foreground">{type.description}</div>
+                      </div>
+                    </SelectItem>
+                  ))}
               </SelectContent>
             </Select>
+            {getSelectedStrategy() && (
+              <p className="text-sm text-muted-foreground mt-2">
+                <strong>{getSelectedStrategy()?.label}:</strong> {getSelectedStrategy()?.description}
+              </p>
+            )}
           </div>
 
           <div>
@@ -176,6 +298,134 @@ export default function StrategyModal({ isOpen, onClose, strategy }: StrategyMod
               Comma-separated list of stock symbols
             </p>
           </div>
+
+          {/* Pattern-specific configuration */}
+          {isPatternStrategy(formData.type) && (
+            <>
+              <Separator />
+              <div className="space-y-4">
+                <div>
+                  <h4 className="text-sm font-semibold flex items-center gap-2">
+                    <Badge variant="secondary">Pattern Detection</Badge>
+                    Configuration
+                  </h4>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Configure pattern detection parameters for optimal signal quality
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="confidenceThreshold">Confidence Threshold (%)</Label>
+                    <Input
+                      id="confidenceThreshold"
+                      type="number"
+                      min="50"
+                      max="99"
+                      value={formData.confidenceThreshold}
+                      onChange={(e) => handleChange('confidenceThreshold', e.target.value)}
+                      placeholder="75"
+                      data-testid="input-confidence-threshold"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Higher values = fewer but higher quality signals
+                    </p>
+                  </div>
+                  
+                  <div>
+                    <Label htmlFor="timeframe">Timeframe</Label>
+                    <Select value={formData.timeframe} onValueChange={(value) => handleChange('timeframe', value)}>
+                      <SelectTrigger data-testid="select-timeframe">
+                        <SelectValue placeholder="Select timeframe" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {timeframeOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="minPatternSize">Min Pattern Size</Label>
+                    <Input
+                      id="minPatternSize"
+                      type="number"
+                      min="5"
+                      max="50"
+                      value={formData.minPatternSize}
+                      onChange={(e) => handleChange('minPatternSize', e.target.value)}
+                      placeholder="10"
+                      data-testid="input-min-pattern-size"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Minimum number of candles for pattern
+                    </p>
+                  </div>
+                  
+                  <div>
+                    <Label htmlFor="maxPatternAge">Max Pattern Age (hours)</Label>
+                    <Input
+                      id="maxPatternAge"
+                      type="number"
+                      min="1"
+                      max="168"
+                      value={formData.maxPatternAge}
+                      onChange={(e) => handleChange('maxPatternAge', e.target.value)}
+                      placeholder="24"
+                      data-testid="input-max-pattern-age"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Maximum age before pattern expires
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="rejectionCandleSize">Rejection Candle Size (%)</Label>
+                    <Input
+                      id="rejectionCandleSize"
+                      type="number"
+                      step="0.1"
+                      min="0.1"
+                      max="5.0"
+                      value={formData.rejectionCandleSize}
+                      onChange={(e) => handleChange('rejectionCandleSize', e.target.value)}
+                      placeholder="0.5"
+                      data-testid="input-rejection-candle-size"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Minimum size for rejection candles
+                    </p>
+                  </div>
+                  
+                  <div>
+                    <Label htmlFor="poleSize">Pole Size (%)</Label>
+                    <Input
+                      id="poleSize"
+                      type="number"
+                      step="0.1"
+                      min="0.5"
+                      max="10.0"
+                      value={formData.poleSize}
+                      onChange={(e) => handleChange('poleSize', e.target.value)}
+                      placeholder="2.0"
+                      data-testid="input-pole-size"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Minimum pole size for flag patterns
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <Separator />
+            </>
+          )}
 
           <div className="grid grid-cols-3 gap-4">
             <div>

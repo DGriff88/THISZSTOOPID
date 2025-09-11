@@ -18,7 +18,15 @@ import {
   TrendingDown,
   Activity
 } from "lucide-react";
-import { type Strategy } from "@shared/schema";
+import { type Strategy, type PatternStrategyParameters } from "@shared/schema";
+
+// Type guard to safely extract pattern parameters
+function getPatternParams(parameters: any): PatternStrategyParameters {
+  if (!parameters || typeof parameters !== 'object') {
+    return {};
+  }
+  return parameters as PatternStrategyParameters;
+}
 
 export default function Strategies() {
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -101,13 +109,37 @@ export default function Strategies() {
 
   const getStrategyTypeLabel = (type: string) => {
     const types: Record<string, string> = {
+      // Traditional Technical Indicators
       moving_average: 'Moving Average',
       rsi: 'RSI',
       bollinger_bands: 'Bollinger Bands',
       macd: 'MACD',
+      // Pattern-Based Strategies
+      head_shoulders_bearish: 'Head & Shoulders Bearish',
+      head_shoulders_bullish: 'Head & Shoulders Bullish',
+      reversal_flag_bearish: 'Reversal Flag Bearish',
+      reversal_flag_bullish: 'Reversal Flag Bullish',
+      three_line_strike_bearish: 'Three Line Strike Bearish',
+      three_line_strike_bullish: 'Three Line Strike Bullish',
+      trap_bearish: 'Trap Bearish',
+      trap_bullish: 'Trap Bullish',
+      reversal_candlestick: 'Reversal Candlestick',
+      common_trading_patterns: 'Common Trading Patterns',
+      // Custom
       custom: 'Custom',
     };
     return types[type] || type;
+  };
+
+  const isPatternStrategy = (type: string) => {
+    const patternTypes = [
+      'head_shoulders_bearish', 'head_shoulders_bullish',
+      'reversal_flag_bearish', 'reversal_flag_bullish',
+      'three_line_strike_bearish', 'three_line_strike_bullish',
+      'trap_bearish', 'trap_bullish',
+      'reversal_candlestick', 'common_trading_patterns'
+    ];
+    return patternTypes.includes(type);
   };
 
   if (isLoading) {
@@ -228,12 +260,17 @@ export default function Strategies() {
         {/* Strategy Grid */}
         {strategies && strategies.length > 0 ? (
           <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-            {strategies.map((strategy) => (
-              <Card 
-                key={strategy.id} 
-                className="relative"
-                data-testid={`strategy-card-${strategy.id}`}
-              >
+            {strategies.map((strategy) => {
+              const patternParams = isPatternStrategy(strategy.type) && strategy.parameters 
+                ? getPatternParams(strategy.parameters) 
+                : null;
+              
+              return (
+                <Card 
+                  key={strategy.id} 
+                  className="relative"
+                  data-testid={`strategy-card-${strategy.id}`}
+                >
                 <CardHeader className="pb-4">
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
@@ -241,10 +278,15 @@ export default function Strategies() {
                         <div className={`w-3 h-3 rounded-full ${strategy.isActive ? 'status-active' : 'status-inactive'}`}></div>
                         <CardTitle className="text-lg">{strategy.name}</CardTitle>
                       </div>
-                      <div className="flex items-center space-x-2">
+                      <div className="flex items-center space-x-2 flex-wrap">
                         <Badge variant="outline" className="text-xs">
                           {getStrategyTypeLabel(strategy.type)}
                         </Badge>
+                        {isPatternStrategy(strategy.type) && (
+                          <Badge variant="secondary" className="text-xs">
+                            Pattern
+                          </Badge>
+                        )}
                         <Badge 
                           variant={strategy.isPaperTrading ? "secondary" : "default"}
                           className="text-xs"
@@ -282,6 +324,41 @@ export default function Strategies() {
                       </p>
                     </div>
                   </div>
+
+                  {/* Pattern-specific configuration display */}
+                  {patternParams && (
+                    <div className="p-3 bg-muted/50 rounded-lg">
+                      <p className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1">
+                        <Badge variant="outline" className="text-xs">Pattern Config</Badge>
+                      </p>
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        {patternParams.confidenceThreshold && (
+                          <div>
+                            <span className="text-muted-foreground">Confidence:</span>
+                            <span className="ml-1 font-medium">{patternParams.confidenceThreshold}%</span>
+                          </div>
+                        )}
+                        {patternParams.timeframe && (
+                          <div>
+                            <span className="text-muted-foreground">Timeframe:</span>
+                            <span className="ml-1 font-medium">{patternParams.timeframe}</span>
+                          </div>
+                        )}
+                        {patternParams.minPatternSize && (
+                          <div>
+                            <span className="text-muted-foreground">Min Size:</span>
+                            <span className="ml-1 font-medium">{patternParams.minPatternSize}</span>
+                          </div>
+                        )}
+                        {patternParams.maxPatternAge && (
+                          <div>
+                            <span className="text-muted-foreground">Max Age:</span>
+                            <span className="ml-1 font-medium">{patternParams.maxPatternAge}h</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {strategy.description && (
                     <div>
@@ -328,7 +405,8 @@ export default function Strategies() {
                   </div>
                 </CardContent>
               </Card>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <Card>
