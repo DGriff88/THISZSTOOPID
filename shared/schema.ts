@@ -424,6 +424,31 @@ export interface PatternOutcome {
 
 export type InsertPatternOutcome = z.infer<typeof insertPatternOutcomeSchema>;
 
+// Pattern Strategy Parameters
+export interface PatternStrategyParameters {
+  confidenceThreshold?: number;
+  timeframe?: string;
+  minPatternSize?: number;
+  maxPatternAge?: number;
+  rejectionCandleSize?: number;
+  poleSize?: number;
+}
+
+// Technical Strategy Parameters
+export interface TechnicalStrategyParameters {
+  period?: number;
+  threshold?: number;
+  [key: string]: any;
+}
+
+// All Strategy Parameters Union
+export type StrategyParameters = PatternStrategyParameters | TechnicalStrategyParameters | Record<string, any>;
+
+// Type-safe Strategy interface extending the base Strategy type
+export interface TypedStrategy extends Omit<Strategy, 'parameters'> {
+  parameters: StrategyParameters;
+}
+
 // Enhanced Analytics
 export interface PatternBacktestRequest {
   strategyId: string;
