@@ -43,7 +43,23 @@ export const PATTERN_TYPES = [
   'bull_flag',
   'bear_flag',
   'bull_pennant',
-  'bear_pennant'
+  'bear_pennant',
+  // Reversal Candlestick Patterns
+  'hammer_bullish',
+  'hammer_bearish',
+  'inverted_hammer_bullish',
+  'inverted_hammer_bearish',
+  'doji_reversal',
+  'dragonfly_doji_bullish',
+  'gravestone_doji_bearish',
+  'bullish_engulfing',
+  'bearish_engulfing',
+  'shooting_star_bearish',
+  'hanging_man_bearish',
+  'morning_star_bullish',
+  'evening_star_bearish',
+  'dark_cloud_cover_bearish',
+  'piercing_pattern_bullish'
 ] as const;
 export const TRADE_SIDES = ['buy', 'sell'] as const;
 export const TRADE_STATUSES = ['pending', 'filled', 'cancelled', 'rejected'] as const;

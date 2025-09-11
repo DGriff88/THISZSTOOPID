@@ -110,6 +110,34 @@ export interface TrapResult {
   };
 }
 
+export interface ReversalCandlestickResult {
+  isDetected: boolean;
+  confidence: number;  // 0-100
+  patternType: 'hammer_bullish' | 'hammer_bearish' | 'inverted_hammer_bullish' | 'inverted_hammer_bearish' | 
+               'doji_reversal' | 'dragonfly_doji_bullish' | 'gravestone_doji_bearish' | 
+               'bullish_engulfing' | 'bearish_engulfing' | 'shooting_star_bearish' | 'hanging_man_bearish' |
+               'morning_star_bullish' | 'evening_star_bearish' | 'dark_cloud_cover_bearish' | 'piercing_pattern_bullish';
+  candle?: PatternPoint;          // Primary reversal candle
+  previousCandle?: PatternPoint;  // Previous candle for context (engulfing patterns)
+  confirmationCandle?: PatternPoint; // Third candle for three-candle patterns
+  supportResistanceLevel?: number; // Nearby support/resistance level
+  metadata: {
+    bodySize: number;             // Size of candle body relative to recent average (%)
+    upperWickSize: number;        // Upper wick size relative to body (ratio)
+    lowerWickSize: number;        // Lower wick size relative to body (ratio)
+    rejectionStrength: number;    // Overall rejection strength (%)
+    trendContext: 'uptrend' | 'downtrend' | 'sideways'; // Recent trend context
+    supportResistanceProximity: number; // Distance to support/resistance (%)
+    volumeConfirmation: boolean;  // Volume supports the pattern
+    momentumExhaustion: number;   // Measure of momentum exhaustion (0-1)
+    recentVolatility: number;     // Recent price volatility (%)
+    candleStrength: number;       // Overall candle strength vs recent candles
+    contextValidation: boolean;   // Pattern occurs at meaningful level
+    patternCompleted: boolean;    // Pattern formation is complete
+    requiresConfirmation: boolean; // Pattern needs confirmation from next candle
+  };
+}
+
 export interface PatternDetectionConfig {
   minCandles: number;  // Minimum candles needed for detection
   lookbackPeriod: number;  // How far back to look for patterns
@@ -139,6 +167,16 @@ export interface PatternDetectionConfig {
   maxBreakoutDuration: number;   // Maximum duration of breakout phase in candles
   trendAnalysisPeriod: number;   // Period for analyzing recent trend strength
   chopDetectionPeriod: number;   // Period for detecting recent consolidation
+  // Reversal Candlestick specific config
+  minWickToBodyRatio: number;    // Minimum wick-to-body ratio for rejection patterns
+  minBodySizeRatio: number;      // Minimum body size ratio vs recent average
+  maxBodySizeRatio: number;      // Maximum body size ratio for doji patterns
+  minRejectionSize: number;      // Minimum rejection size in percentage
+  supportResistanceWindow: number; // Window for finding support/resistance levels
+  trendContextPeriod: number;    // Period for determining trend context
+  volumeSignificanceThreshold: number; // Volume threshold for significance
+  dojiBodyThreshold: number;     // Maximum body size for doji identification (%)
+  engulfingMinimumRatio: number; // Minimum engulfment ratio for engulfing patterns
 }
 
 export class HeadAndShouldersDetector {
@@ -176,6 +214,15 @@ export class HeadAndShouldersDetector {
       maxBreakoutDuration: 5, // Max 5 candles breakout duration
       trendAnalysisPeriod: 20, // 20 candles for trend analysis
       chopDetectionPeriod: 15, // 15 candles for chop detection
+      // Reversal Candlestick specific defaults
+      minWickToBodyRatio: 2.0, // Minimum 2:1 wick-to-body ratio for rejection patterns
+      minBodySizeRatio: 0.7, // Minimum 70% of recent average body size
+      maxBodySizeRatio: 0.1, // Maximum 10% body size for doji patterns
+      supportResistanceWindow: 20, // Look back 20 candles for support/resistance
+      trendContextPeriod: 10, // 10 candles for trend context analysis
+      volumeSignificanceThreshold: 1.3, // 30% above average volume
+      dojiBodyThreshold: 0.1, // Maximum 0.1% body size for doji identification
+      engulfingMinimumRatio: 1.0, // 100% minimum engulfment ratio
       ...config
     };
   }
@@ -450,6 +497,24 @@ export class HeadAndShouldersDetector {
       );
       detectedPatterns.push(signal);
       this.recordSignal(symbol, bullishTrapResult.patternType, timeframe);
+    }
+
+    // Detect reversal candlestick patterns
+    const reversalCandlestickResults = this.detectReversalCandlestickPatterns(sortedCandles);
+    for (const candlestickResult of reversalCandlestickResults) {
+      if (candlestickResult.isDetected && 
+          candlestickResult.confidence >= this.config.confidenceThreshold &&
+          !this.isDuplicateSignal(symbol, candlestickResult.patternType, timeframe)) {
+        const signal = this.createReversalCandlestickSignal(
+          candlestickResult, 
+          strategyId, 
+          symbol, 
+          timeframe, 
+          sortedCandles
+        );
+        detectedPatterns.push(signal);
+        this.recordSignal(symbol, candlestickResult.patternType, timeframe);
+      }
     }
 
     return detectedPatterns;
@@ -3101,6 +3166,964 @@ export class HeadAndShouldersDetector {
         recentChopHigh: result.recentChopHigh,
         recentChopLow: result.recentChopLow
       }
+    };
+  }
+
+  // ========================= REVERSAL CANDLESTICK PATTERN DETECTION =========================
+
+  /**
+   * Detect reversal candlestick patterns (Hammer, Doji, Engulfing, etc.)
+   * Focus on momentum and rejection analysis per Riley's approach
+   */
+  private detectReversalCandlestickPatterns(candles: OHLCVCandles[]): ReversalCandlestickResult[] {
+    if (candles.length < 3) {
+      return [];
+    }
+
+    const patterns: ReversalCandlestickResult[] = [];
+
+    // Analyze last few candles for reversal patterns
+    for (let i = candles.length - 3; i < candles.length; i++) {
+      if (i < 2) continue; // Need at least 2 previous candles for context
+
+      // Single candle patterns
+      const hammerResult = this.detectHammerPattern(candles, i);
+      if (hammerResult.isDetected) patterns.push(hammerResult);
+
+      const dojiResult = this.detectDojiPattern(candles, i);
+      if (dojiResult.isDetected) patterns.push(dojiResult);
+
+      const shootingStarResult = this.detectShootingStarPattern(candles, i);
+      if (shootingStarResult.isDetected) patterns.push(shootingStarResult);
+
+      // Two candle patterns
+      if (i > 0) {
+        const engulfingResult = this.detectEngulfingPattern(candles, i);
+        if (engulfingResult.isDetected) patterns.push(engulfingResult);
+
+        const piercingResult = this.detectPiercingPattern(candles, i);
+        if (piercingResult.isDetected) patterns.push(piercingResult);
+      }
+
+      // Three candle patterns  
+      if (i > 1) {
+        const morningStarResult = this.detectMorningStarPattern(candles, i);
+        if (morningStarResult.isDetected) patterns.push(morningStarResult);
+
+        const eveningStarResult = this.detectEveningStarPattern(candles, i);
+        if (eveningStarResult.isDetected) patterns.push(eveningStarResult);
+      }
+    }
+
+    return patterns.filter(p => p.confidence >= this.config.confidenceThreshold);
+  }
+
+  /**
+   * Detect Hammer and Inverted Hammer patterns
+   * Focus on rejection strength and support/resistance context
+   */
+  private detectHammerPattern(candles: OHLCVCandles[], index: number): ReversalCandlestickResult {
+    const candle = candles[index];
+    const open = this.safeParseFloat(candle.open);
+    const high = this.safeParseFloat(candle.high);
+    const low = this.safeParseFloat(candle.low);
+    const close = this.safeParseFloat(candle.close);
+
+    const bodySize = Math.abs(close - open);
+    const totalRange = high - low;
+    const upperWick = high - Math.max(open, close);
+    const lowerWick = Math.min(open, close) - low;
+
+    // Determine if hammer (bullish) or hanging man (bearish) based on trend context
+    const trendContext = this.determineTrendContext(candles, index);
+    const isHammer = (trendContext === 'downtrend' && lowerWick > upperWick * this.config.minWickToBodyRatio);
+    const isInvertedHammer = (trendContext === 'downtrend' && upperWick > lowerWick * this.config.minWickToBodyRatio);
+    const isHangingMan = (trendContext === 'uptrend' && lowerWick > upperWick * this.config.minWickToBodyRatio);
+
+    if (!isHammer && !isInvertedHammer && !isHangingMan) {
+      return this.createEmptyReversalCandlestickResult();
+    }
+
+    // Riley's focus: rejection strength and meaningful context
+    const rejectionWick = isHammer || isHangingMan ? lowerWick : upperWick;
+    const wickToBodyRatio = bodySize > 0 ? rejectionWick / bodySize : 0;
+    const rejectionStrength = (rejectionWick / totalRange) * 100;
+
+    // Context validation - pattern should occur near support/resistance
+    const supportResistanceLevel = this.findNearestSupportResistance(candles, index, isHammer || isInvertedHammer);
+    const proximityToSR = supportResistanceLevel ? 
+      Math.abs(close - supportResistanceLevel) / close * 100 : 100;
+
+    // Volume confirmation
+    const volumeConfirmation = this.checkVolumeConfirmation(candles, [index]);
+    const recentVolatility = this.calculateRecentVolatility(candles, index);
+    const averageBodySize = this.calculateAverageBodySize(candles, index, 10);
+
+    let confidence = 0;
+
+    // Core pattern requirements
+    if (wickToBodyRatio >= this.config.minWickToBodyRatio && rejectionStrength >= this.config.minRejectionSize) {
+      confidence += 30;
+      
+      // Context bonus
+      if (proximityToSR <= 2.0) confidence += 25; // Near support/resistance
+      if (volumeConfirmation) confidence += 15; // Volume confirmation
+      if (bodySize >= averageBodySize * this.config.minBodySizeRatio) confidence += 10; // Significant body
+      if (recentVolatility > averageBodySize * 1.5) confidence += 10; // High volatility context
+      if (rejectionStrength > 5.0) confidence += 10; // Strong rejection
+    }
+
+    const patternType = isHammer ? 'hammer_bullish' : 
+                      isInvertedHammer ? 'inverted_hammer_bullish' : 'hanging_man_bearish';
+
+    return {
+      isDetected: confidence >= this.config.confidenceThreshold,
+      confidence,
+      patternType,
+      candle: {
+        index,
+        price: close,
+        timestamp: candle.timestamp,
+        volume: candle.volume,
+        isHigh: false
+      },
+      supportResistanceLevel,
+      metadata: {
+        bodySize: (bodySize / averageBodySize) * 100,
+        upperWickSize: upperWick / (bodySize || 0.01),
+        lowerWickSize: lowerWick / (bodySize || 0.01),
+        rejectionStrength,
+        trendContext,
+        supportResistanceProximity: proximityToSR,
+        volumeConfirmation,
+        momentumExhaustion: this.calculateMomentumExhaustion(candles, index),
+        recentVolatility,
+        candleStrength: bodySize / averageBodySize,
+        contextValidation: proximityToSR <= 2.0,
+        patternCompleted: true,
+        requiresConfirmation: true
+      }
+    };
+  }
+
+  /**
+   * Detect Doji patterns (regular, dragonfly, gravestone)
+   * Focus on indecision and momentum exhaustion
+   */
+  private detectDojiPattern(candles: OHLCVCandles[], index: number): ReversalCandlestickResult {
+    const candle = candles[index];
+    const open = this.safeParseFloat(candle.open);
+    const high = this.safeParseFloat(candle.high);
+    const low = this.safeParseFloat(candle.low);
+    const close = this.safeParseFloat(candle.close);
+
+    const bodySize = Math.abs(close - open);
+    const totalRange = high - low;
+    const upperWick = high - Math.max(open, close);
+    const lowerWick = Math.min(open, close) - low;
+    const averageBodySize = this.calculateAverageBodySize(candles, index, 10);
+
+    // Doji identification: very small body relative to range
+    const bodyToRangeRatio = totalRange > 0 ? (bodySize / totalRange) * 100 : 0;
+    if (bodyToRangeRatio > this.config.dojiBodyThreshold) {
+      return this.createEmptyReversalCandlestickResult();
+    }
+
+    const trendContext = this.determineTrendContext(candles, index);
+    
+    // Determine doji type based on wick characteristics
+    let patternType: any = 'doji_reversal';
+    if (lowerWick > upperWick * 2 && lowerWick > totalRange * 0.6) {
+      patternType = 'dragonfly_doji_bullish';
+    } else if (upperWick > lowerWick * 2 && upperWick > totalRange * 0.6) {
+      patternType = 'gravestone_doji_bearish';
+    }
+
+    // Riley's focus: momentum exhaustion and context
+    const momentumExhaustion = this.calculateMomentumExhaustion(candles, index);
+    const supportResistanceLevel = this.findNearestSupportResistance(candles, index, 
+      patternType === 'dragonfly_doji_bullish');
+    const proximityToSR = supportResistanceLevel ? 
+      Math.abs(close - supportResistanceLevel) / close * 100 : 100;
+
+    const volumeConfirmation = this.checkVolumeConfirmation(candles, [index]);
+    const recentVolatility = this.calculateRecentVolatility(candles, index);
+
+    let confidence = 0;
+
+    // Core doji requirements
+    if (bodyToRangeRatio <= this.config.dojiBodyThreshold && totalRange > averageBodySize * 0.5) {
+      confidence += 40;
+      
+      // Context and momentum factors
+      if (momentumExhaustion > 0.6) confidence += 20; // High momentum exhaustion
+      if (proximityToSR <= 1.5) confidence += 20; // Very close to S/R
+      if (volumeConfirmation) confidence += 10; // Volume confirmation
+      if (recentVolatility > averageBodySize) confidence += 10; // Volatile context
+    }
+
+    return {
+      isDetected: confidence >= this.config.confidenceThreshold,
+      confidence,
+      patternType,
+      candle: {
+        index,
+        price: close,
+        timestamp: candle.timestamp,
+        volume: candle.volume,
+        isHigh: false
+      },
+      supportResistanceLevel,
+      metadata: {
+        bodySize: (bodySize / averageBodySize) * 100,
+        upperWickSize: upperWick / (bodySize || 0.01),
+        lowerWickSize: lowerWick / (bodySize || 0.01),
+        rejectionStrength: (Math.max(upperWick, lowerWick) / totalRange) * 100,
+        trendContext,
+        supportResistanceProximity: proximityToSR,
+        volumeConfirmation,
+        momentumExhaustion,
+        recentVolatility,
+        candleStrength: totalRange / averageBodySize,
+        contextValidation: proximityToSR <= 2.0,
+        patternCompleted: true,
+        requiresConfirmation: true
+      }
+    };
+  }
+
+  /**
+   * Detect Shooting Star patterns
+   * Focus on rejection from highs in uptrends
+   */
+  private detectShootingStarPattern(candles: OHLCVCandles[], index: number): ReversalCandlestickResult {
+    const candle = candles[index];
+    const open = this.safeParseFloat(candle.open);
+    const high = this.safeParseFloat(candle.high);
+    const low = this.safeParseFloat(candle.low);
+    const close = this.safeParseFloat(candle.close);
+
+    const bodySize = Math.abs(close - open);
+    const totalRange = high - low;
+    const upperWick = high - Math.max(open, close);
+    const lowerWick = Math.min(open, close) - low;
+
+    const trendContext = this.determineTrendContext(candles, index);
+    
+    // Shooting star: long upper wick, small body, small lower wick, in uptrend
+    if (trendContext !== 'uptrend') {
+      return this.createEmptyReversalCandlestickResult();
+    }
+
+    const wickToBodyRatio = bodySize > 0 ? upperWick / bodySize : 0;
+    const upperWickRatio = totalRange > 0 ? upperWick / totalRange : 0;
+    
+    if (wickToBodyRatio < this.config.minWickToBodyRatio || upperWickRatio < 0.6) {
+      return this.createEmptyReversalCandlestickResult();
+    }
+
+    // Riley's focus: strong rejection from highs
+    const rejectionStrength = upperWickRatio * 100;
+    const supportResistanceLevel = this.findNearestSupportResistance(candles, index, false);
+    const proximityToSR = supportResistanceLevel ? 
+      Math.abs(high - supportResistanceLevel) / high * 100 : 100;
+
+    const volumeConfirmation = this.checkVolumeConfirmation(candles, [index]);
+    const momentumExhaustion = this.calculateMomentumExhaustion(candles, index);
+    const averageBodySize = this.calculateAverageBodySize(candles, index, 10);
+
+    let confidence = 0;
+
+    // Core shooting star requirements
+    if (wickToBodyRatio >= this.config.minWickToBodyRatio && rejectionStrength >= 60) {
+      confidence += 35;
+      
+      // Context factors
+      if (proximityToSR <= 2.0) confidence += 25; // Near resistance
+      if (volumeConfirmation) confidence += 15; // Volume confirmation  
+      if (momentumExhaustion > 0.5) confidence += 15; // Momentum exhaustion
+      if (lowerWick <= bodySize * 0.3) confidence += 10; // Small lower wick
+    }
+
+    return {
+      isDetected: confidence >= this.config.confidenceThreshold,
+      confidence,
+      patternType: 'shooting_star_bearish',
+      candle: {
+        index,
+        price: close,
+        timestamp: candle.timestamp,
+        volume: candle.volume,
+        isHigh: true
+      },
+      supportResistanceLevel,
+      metadata: {
+        bodySize: (bodySize / averageBodySize) * 100,
+        upperWickSize: upperWick / (bodySize || 0.01),
+        lowerWickSize: lowerWick / (bodySize || 0.01),
+        rejectionStrength,
+        trendContext,
+        supportResistanceProximity: proximityToSR,
+        volumeConfirmation,
+        momentumExhaustion,
+        recentVolatility: this.calculateRecentVolatility(candles, index),
+        candleStrength: bodySize / averageBodySize,
+        contextValidation: proximityToSR <= 2.0,
+        patternCompleted: true,
+        requiresConfirmation: true
+      }
+    };
+  }
+
+  /**
+   * Detect Engulfing patterns (bullish/bearish)
+   * Focus on momentum shift and body size relationship
+   */
+  private detectEngulfingPattern(candles: OHLCVCandles[], index: number): ReversalCandlestickResult {
+    if (index < 1) return this.createEmptyReversalCandlestickResult();
+
+    const currentCandle = candles[index];
+    const previousCandle = candles[index - 1];
+
+    const currentOpen = this.safeParseFloat(currentCandle.open);
+    const currentClose = this.safeParseFloat(currentCandle.close);
+    const prevOpen = this.safeParseFloat(previousCandle.open);
+    const prevClose = this.safeParseFloat(previousCandle.close);
+
+    const currentBody = Math.abs(currentClose - currentOpen);
+    const prevBody = Math.abs(prevClose - prevOpen);
+    const currentIsBullish = currentClose > currentOpen;
+    const prevIsBullish = prevClose > prevOpen;
+
+    // Engulfing requirements: opposite colors and current body engulfs previous
+    if (currentIsBullish === prevIsBullish) {
+      return this.createEmptyReversalCandlestickResult();
+    }
+
+    const trendContext = this.determineTrendContext(candles, index);
+    const isBullishEngulfing = currentIsBullish && trendContext === 'downtrend';
+    const isBearishEngulfing = !currentIsBullish && trendContext === 'uptrend';
+
+    if (!isBullishEngulfing && !isBearishEngulfing) {
+      return this.createEmptyReversalCandlestickResult();
+    }
+
+    // Check engulfment - current candle body must engulf previous
+    const engulfsBody = currentIsBullish ? 
+      (currentOpen <= prevClose && currentClose >= prevOpen) :
+      (currentOpen >= prevClose && currentClose <= prevOpen);
+
+    if (!engulfsBody) {
+      return this.createEmptyReversalCandlestickResult();
+    }
+
+    // Riley's focus: significant size and momentum change
+    const engulfmentRatio = prevBody > 0 ? currentBody / prevBody : 0;
+    const averageBodySize = this.calculateAverageBodySize(candles, index, 10);
+    
+    const supportResistanceLevel = this.findNearestSupportResistance(candles, index, isBullishEngulfing);
+    const proximityToSR = supportResistanceLevel ? 
+      Math.abs(currentClose - supportResistanceLevel) / currentClose * 100 : 100;
+
+    const volumeConfirmation = this.checkVolumeConfirmation(candles, [index]);
+    const momentumExhaustion = this.calculateMomentumExhaustion(candles, index);
+
+    let confidence = 0;
+
+    // Core engulfing requirements
+    if (engulfmentRatio >= this.config.engulfingMinimumRatio && currentBody >= averageBodySize * 0.8) {
+      confidence += 40;
+      
+      // Size and context factors
+      if (engulfmentRatio >= 1.5) confidence += 15; // Strong engulfment
+      if (proximityToSR <= 2.0) confidence += 20; // Near S/R level
+      if (volumeConfirmation) confidence += 15; // Volume confirmation
+      if (momentumExhaustion > 0.4) confidence += 10; // Momentum shift
+    }
+
+    const patternType = isBullishEngulfing ? 'bullish_engulfing' : 'bearish_engulfing';
+
+    return {
+      isDetected: confidence >= this.config.confidenceThreshold,
+      confidence,
+      patternType,
+      candle: {
+        index,
+        price: currentClose,
+        timestamp: currentCandle.timestamp,
+        volume: currentCandle.volume,
+        isHigh: !currentIsBullish
+      },
+      previousCandle: {
+        index: index - 1,
+        price: prevClose,
+        timestamp: previousCandle.timestamp,
+        volume: previousCandle.volume,
+        isHigh: prevIsBullish
+      },
+      supportResistanceLevel,
+      metadata: {
+        bodySize: (currentBody / averageBodySize) * 100,
+        upperWickSize: 0, // Not relevant for engulfing
+        lowerWickSize: 0, // Not relevant for engulfing
+        rejectionStrength: engulfmentRatio * 50, // Use engulfment as rejection metric
+        trendContext,
+        supportResistanceProximity: proximityToSR,
+        volumeConfirmation,
+        momentumExhaustion,
+        recentVolatility: this.calculateRecentVolatility(candles, index),
+        candleStrength: currentBody / averageBodySize,
+        contextValidation: proximityToSR <= 2.0,
+        patternCompleted: true,
+        requiresConfirmation: false
+      }
+    };
+  }
+
+  /**
+   * Detect Piercing Pattern and Dark Cloud Cover
+   * Two-candle reversal patterns with partial body penetration
+   */
+  private detectPiercingPattern(candles: OHLCVCandles[], index: number): ReversalCandlestickResult {
+    if (index < 1) return this.createEmptyReversalCandlestickResult();
+
+    const currentCandle = candles[index];
+    const previousCandle = candles[index - 1];
+
+    const currentOpen = this.safeParseFloat(currentCandle.open);
+    const currentClose = this.safeParseFloat(currentCandle.close);
+    const prevOpen = this.safeParseFloat(previousCandle.open);
+    const prevClose = this.safeParseFloat(previousCandle.close);
+
+    const currentIsBullish = currentClose > currentOpen;
+    const prevIsBullish = prevClose > prevOpen;
+    const trendContext = this.determineTrendContext(candles, index);
+
+    // Piercing pattern: bearish candle followed by bullish in downtrend
+    // Dark cloud cover: bullish candle followed by bearish in uptrend
+    const isPiercing = !prevIsBullish && currentIsBullish && trendContext === 'downtrend';
+    const isDarkCloud = prevIsBullish && !currentIsBullish && trendContext === 'uptrend';
+
+    if (!isPiercing && !isDarkCloud) {
+      return this.createEmptyReversalCandlestickResult();
+    }
+
+    // Check penetration requirements
+    const prevBody = Math.abs(prevClose - prevOpen);
+    const penetrationLevel = isPiercing ? 
+      (prevOpen + prevClose) / 2 : // Piercing: penetrate halfway into prev body
+      (prevOpen + prevClose) / 2;  // Dark cloud: same logic
+
+    const hasPenetration = isPiercing ? 
+      currentClose > penetrationLevel : 
+      currentClose < penetrationLevel;
+
+    if (!hasPenetration) {
+      return this.createEmptyReversalCandlestickResult();
+    }
+
+    // Riley's focus: strength of penetration and context
+    const penetrationRatio = isPiercing ? 
+      (currentClose - prevClose) / prevBody :
+      (prevClose - currentClose) / prevBody;
+
+    const averageBodySize = this.calculateAverageBodySize(candles, index, 10);
+    const supportResistanceLevel = this.findNearestSupportResistance(candles, index, isPiercing);
+    const proximityToSR = supportResistanceLevel ? 
+      Math.abs(currentClose - supportResistanceLevel) / currentClose * 100 : 100;
+
+    const volumeConfirmation = this.checkVolumeConfirmation(candles, [index]);
+    const momentumExhaustion = this.calculateMomentumExhaustion(candles, index);
+
+    let confidence = 0;
+
+    // Core pattern requirements
+    if (penetrationRatio >= 0.5 && Math.abs(currentClose - currentOpen) >= averageBodySize * 0.7) {
+      confidence += 35;
+      
+      // Penetration and context factors
+      if (penetrationRatio >= 0.7) confidence += 15; // Strong penetration
+      if (proximityToSR <= 2.0) confidence += 20; // Near S/R level
+      if (volumeConfirmation) confidence += 15; // Volume confirmation
+      if (momentumExhaustion > 0.4) confidence += 15; // Momentum shift
+    }
+
+    const patternType = isPiercing ? 'piercing_pattern_bullish' : 'dark_cloud_cover_bearish';
+
+    return {
+      isDetected: confidence >= this.config.confidenceThreshold,
+      confidence,
+      patternType,
+      candle: {
+        index,
+        price: currentClose,
+        timestamp: currentCandle.timestamp,
+        volume: currentCandle.volume,
+        isHigh: !currentIsBullish
+      },
+      previousCandle: {
+        index: index - 1,
+        price: prevClose,
+        timestamp: previousCandle.timestamp,
+        volume: previousCandle.volume,
+        isHigh: prevIsBullish
+      },
+      supportResistanceLevel,
+      metadata: {
+        bodySize: (Math.abs(currentClose - currentOpen) / averageBodySize) * 100,
+        upperWickSize: 0, // Not primary focus
+        lowerWickSize: 0, // Not primary focus
+        rejectionStrength: penetrationRatio * 100,
+        trendContext,
+        supportResistanceProximity: proximityToSR,
+        volumeConfirmation,
+        momentumExhaustion,
+        recentVolatility: this.calculateRecentVolatility(candles, index),
+        candleStrength: Math.abs(currentClose - currentOpen) / averageBodySize,
+        contextValidation: proximityToSR <= 2.0,
+        patternCompleted: true,
+        requiresConfirmation: true
+      }
+    };
+  }
+
+  /**
+   * Detect Morning Star pattern (three-candle bullish reversal)
+   */
+  private detectMorningStarPattern(candles: OHLCVCandles[], index: number): ReversalCandlestickResult {
+    if (index < 2) return this.createEmptyReversalCandlestickResult();
+
+    const firstCandle = candles[index - 2];
+    const starCandle = candles[index - 1];
+    const thirdCandle = candles[index];
+
+    const first = {
+      open: this.safeParseFloat(firstCandle.open),
+      close: this.safeParseFloat(firstCandle.close)
+    };
+    const star = {
+      open: this.safeParseFloat(starCandle.open),
+      close: this.safeParseFloat(starCandle.close),
+      high: this.safeParseFloat(starCandle.high),
+      low: this.safeParseFloat(starCandle.low)
+    };
+    const third = {
+      open: this.safeParseFloat(thirdCandle.open),
+      close: this.safeParseFloat(thirdCandle.close)
+    };
+
+    const trendContext = this.determineTrendContext(candles, index);
+    if (trendContext !== 'downtrend') {
+      return this.createEmptyReversalCandlestickResult();
+    }
+
+    // Morning star requirements
+    const firstIsBearish = first.close < first.open;
+    const thirdIsBullish = third.close > third.open;
+    const starIsSmall = Math.abs(star.close - star.open) < Math.abs(first.close - first.open) * 0.3;
+    
+    // Star should gap down from first candle and third should recover
+    const gapDown = star.high < first.close;
+    const recovery = third.close > (first.open + first.close) / 2;
+
+    if (!firstIsBearish || !thirdIsBullish || !starIsSmall || !gapDown || !recovery) {
+      return this.createEmptyReversalCandlestickResult();
+    }
+
+    // Riley's focus: strength of reversal and context
+    const reversalStrength = (third.close - star.low) / (first.open - star.low);
+    const averageBodySize = this.calculateAverageBodySize(candles, index, 10);
+    
+    const supportResistanceLevel = this.findNearestSupportResistance(candles, index, true);
+    const proximityToSR = supportResistanceLevel ? 
+      Math.abs(third.close - supportResistanceLevel) / third.close * 100 : 100;
+
+    const volumeConfirmation = this.checkVolumeConfirmation(candles, [index]);
+    const momentumExhaustion = this.calculateMomentumExhaustion(candles, index);
+
+    let confidence = 0;
+
+    // Core morning star requirements
+    if (reversalStrength >= 0.6 && Math.abs(third.close - third.open) >= averageBodySize * 0.8) {
+      confidence += 40;
+      
+      // Pattern strength factors
+      if (reversalStrength >= 0.8) confidence += 15; // Strong recovery
+      if (proximityToSR <= 2.0) confidence += 20; // Near support
+      if (volumeConfirmation) confidence += 15; // Volume confirmation
+      if (momentumExhaustion > 0.5) confidence += 10; // High exhaustion
+    }
+
+    return {
+      isDetected: confidence >= this.config.confidenceThreshold,
+      confidence,
+      patternType: 'morning_star_bullish',
+      candle: {
+        index,
+        price: third.close,
+        timestamp: thirdCandle.timestamp,
+        volume: thirdCandle.volume,
+        isHigh: false
+      },
+      previousCandle: {
+        index: index - 1,
+        price: star.close,
+        timestamp: starCandle.timestamp,
+        volume: starCandle.volume,
+        isHigh: false
+      },
+      confirmationCandle: {
+        index: index - 2,
+        price: first.close,
+        timestamp: firstCandle.timestamp,
+        volume: firstCandle.volume,
+        isHigh: false
+      },
+      supportResistanceLevel,
+      metadata: {
+        bodySize: (Math.abs(third.close - third.open) / averageBodySize) * 100,
+        upperWickSize: 0, // Not primary focus
+        lowerWickSize: 0, // Not primary focus
+        rejectionStrength: reversalStrength * 100,
+        trendContext,
+        supportResistanceProximity: proximityToSR,
+        volumeConfirmation,
+        momentumExhaustion,
+        recentVolatility: this.calculateRecentVolatility(candles, index),
+        candleStrength: Math.abs(third.close - third.open) / averageBodySize,
+        contextValidation: proximityToSR <= 2.0,
+        patternCompleted: true,
+        requiresConfirmation: false
+      }
+    };
+  }
+
+  /**
+   * Detect Evening Star pattern (three-candle bearish reversal)
+   */
+  private detectEveningStarPattern(candles: OHLCVCandles[], index: number): ReversalCandlestickResult {
+    if (index < 2) return this.createEmptyReversalCandlestickResult();
+
+    const firstCandle = candles[index - 2];
+    const starCandle = candles[index - 1];
+    const thirdCandle = candles[index];
+
+    const first = {
+      open: this.safeParseFloat(firstCandle.open),
+      close: this.safeParseFloat(firstCandle.close)
+    };
+    const star = {
+      open: this.safeParseFloat(starCandle.open),
+      close: this.safeParseFloat(starCandle.close),
+      high: this.safeParseFloat(starCandle.high),
+      low: this.safeParseFloat(starCandle.low)
+    };
+    const third = {
+      open: this.safeParseFloat(thirdCandle.open),
+      close: this.safeParseFloat(thirdCandle.close)
+    };
+
+    const trendContext = this.determineTrendContext(candles, index);
+    if (trendContext !== 'uptrend') {
+      return this.createEmptyReversalCandlestickResult();
+    }
+
+    // Evening star requirements (opposite of morning star)
+    const firstIsBullish = first.close > first.open;
+    const thirdIsBearish = third.close < third.open;
+    const starIsSmall = Math.abs(star.close - star.open) < Math.abs(first.close - first.open) * 0.3;
+    
+    // Star should gap up from first candle and third should decline
+    const gapUp = star.low > first.close;
+    const decline = third.close < (first.open + first.close) / 2;
+
+    if (!firstIsBullish || !thirdIsBearish || !starIsSmall || !gapUp || !decline) {
+      return this.createEmptyReversalCandlestickResult();
+    }
+
+    // Riley's focus: strength of reversal and context
+    const reversalStrength = (star.high - third.close) / (star.high - first.open);
+    const averageBodySize = this.calculateAverageBodySize(candles, index, 10);
+    
+    const supportResistanceLevel = this.findNearestSupportResistance(candles, index, false);
+    const proximityToSR = supportResistanceLevel ? 
+      Math.abs(third.close - supportResistanceLevel) / third.close * 100 : 100;
+
+    const volumeConfirmation = this.checkVolumeConfirmation(candles, [index]);
+    const momentumExhaustion = this.calculateMomentumExhaustion(candles, index);
+
+    let confidence = 0;
+
+    // Core evening star requirements
+    if (reversalStrength >= 0.6 && Math.abs(third.close - third.open) >= averageBodySize * 0.8) {
+      confidence += 40;
+      
+      // Pattern strength factors
+      if (reversalStrength >= 0.8) confidence += 15; // Strong decline
+      if (proximityToSR <= 2.0) confidence += 20; // Near resistance
+      if (volumeConfirmation) confidence += 15; // Volume confirmation
+      if (momentumExhaustion > 0.5) confidence += 10; // High exhaustion
+    }
+
+    return {
+      isDetected: confidence >= this.config.confidenceThreshold,
+      confidence,
+      patternType: 'evening_star_bearish',
+      candle: {
+        index,
+        price: third.close,
+        timestamp: thirdCandle.timestamp,
+        volume: thirdCandle.volume,
+        isHigh: true
+      },
+      previousCandle: {
+        index: index - 1,
+        price: star.close,
+        timestamp: starCandle.timestamp,
+        volume: starCandle.volume,
+        isHigh: true
+      },
+      confirmationCandle: {
+        index: index - 2,
+        price: first.close,
+        timestamp: firstCandle.timestamp,
+        volume: firstCandle.volume,
+        isHigh: true
+      },
+      supportResistanceLevel,
+      metadata: {
+        bodySize: (Math.abs(third.close - third.open) / averageBodySize) * 100,
+        upperWickSize: 0, // Not primary focus
+        lowerWickSize: 0, // Not primary focus
+        rejectionStrength: reversalStrength * 100,
+        trendContext,
+        supportResistanceProximity: proximityToSR,
+        volumeConfirmation,
+        momentumExhaustion,
+        recentVolatility: this.calculateRecentVolatility(candles, index),
+        candleStrength: Math.abs(third.close - third.open) / averageBodySize,
+        contextValidation: proximityToSR <= 2.0,
+        patternCompleted: true,
+        requiresConfirmation: false
+      }
+    };
+  }
+
+  // ========================= HELPER METHODS FOR CANDLESTICK ANALYSIS =========================
+
+  /**
+   * Determine trend context for candlestick pattern validation
+   */
+  private determineTrendContext(candles: OHLCVCandles[], index: number): 'uptrend' | 'downtrend' | 'sideways' {
+    const lookback = Math.min(this.config.trendContextPeriod, index);
+    if (lookback < 3) return 'sideways';
+
+    const startIndex = index - lookback;
+    const startPrice = this.safeParseFloat(candles[startIndex].close);
+    const endPrice = this.safeParseFloat(candles[index].close);
+    const priceChange = (endPrice - startPrice) / startPrice;
+
+    // Calculate trend strength
+    let upMoves = 0;
+    let downMoves = 0;
+    
+    for (let i = startIndex + 1; i <= index; i++) {
+      const prevClose = this.safeParseFloat(candles[i - 1].close);
+      const currentClose = this.safeParseFloat(candles[i].close);
+      if (currentClose > prevClose) upMoves++;
+      else if (currentClose < prevClose) downMoves++;
+    }
+
+    const trendStrength = Math.abs(priceChange);
+    
+    if (trendStrength < 0.02) return 'sideways'; // Less than 2% move
+    if (priceChange > 0.02 && upMoves > downMoves) return 'uptrend';
+    if (priceChange < -0.02 && downMoves > upMoves) return 'downtrend';
+    
+    return 'sideways';
+  }
+
+  /**
+   * Calculate average body size for context
+   */
+  private calculateAverageBodySize(candles: OHLCVCandles[], index: number, period: number): number {
+    const start = Math.max(0, index - period);
+    let totalBodySize = 0;
+    let count = 0;
+
+    for (let i = start; i < index; i++) {
+      const open = this.safeParseFloat(candles[i].open);
+      const close = this.safeParseFloat(candles[i].close);
+      totalBodySize += Math.abs(close - open);
+      count++;
+    }
+
+    return count > 0 ? totalBodySize / count : 0.01;
+  }
+
+  /**
+   * Calculate recent volatility for context analysis
+   */
+  private calculateRecentVolatility(candles: OHLCVCandles[], index: number, period: number = 10): number {
+    const start = Math.max(0, index - period);
+    let totalRange = 0;
+    let count = 0;
+
+    for (let i = start; i < index; i++) {
+      const high = this.safeParseFloat(candles[i].high);
+      const low = this.safeParseFloat(candles[i].low);
+      totalRange += (high - low);
+      count++;
+    }
+
+    return count > 0 ? totalRange / count : 0.01;
+  }
+
+  /**
+   * Find nearest support or resistance level
+   */
+  private findNearestSupportResistance(candles: OHLCVCandles[], index: number, lookingForSupport: boolean): number | null {
+    const lookback = Math.min(this.config.supportResistanceWindow, index);
+    const currentPrice = this.safeParseFloat(candles[index].close);
+    
+    let nearestLevel: number | null = null;
+    let nearestDistance = Infinity;
+
+    // Look for significant highs/lows in recent history
+    for (let i = index - lookback; i < index - 1; i++) {
+      if (i < 1) continue;
+      
+      const high = this.safeParseFloat(candles[i].high);
+      const low = this.safeParseFloat(candles[i].low);
+      
+      // Check if this candle has a significant high or low
+      const isSignificantHigh = this.isLocalHigh(candles, i, 2);
+      const isSignificantLow = this.isLocalLow(candles, i, 2);
+      
+      const relevantPrice = lookingForSupport ? low : high;
+      const isRelevantLevel = lookingForSupport ? isSignificantLow : isSignificantHigh;
+      
+      if (isRelevantLevel) {
+        const distance = Math.abs(currentPrice - relevantPrice);
+        if (distance < nearestDistance) {
+          nearestDistance = distance;
+          nearestLevel = relevantPrice;
+        }
+      }
+    }
+
+    return nearestLevel;
+  }
+
+  /**
+   * Check if index represents a local high
+   */
+  private isLocalHigh(candles: OHLCVCandles[], index: number, window: number): boolean {
+    const currentHigh = this.safeParseFloat(candles[index].high);
+    
+    for (let i = Math.max(0, index - window); i <= Math.min(candles.length - 1, index + window); i++) {
+      if (i !== index) {
+        const compareHigh = this.safeParseFloat(candles[i].high);
+        if (compareHigh >= currentHigh) return false;
+      }
+    }
+    
+    return true;
+  }
+
+  /**
+   * Check if index represents a local low
+   */
+  private isLocalLow(candles: OHLCVCandles[], index: number, window: number): boolean {
+    const currentLow = this.safeParseFloat(candles[index].low);
+    
+    for (let i = Math.max(0, index - window); i <= Math.min(candles.length - 1, index + window); i++) {
+      if (i !== index) {
+        const compareLow = this.safeParseFloat(candles[i].low);
+        if (compareLow <= currentLow) return false;
+      }
+    }
+    
+    return true;
+  }
+
+  /**
+   * Create empty reversal candlestick result
+   */
+  private createEmptyReversalCandlestickResult(): ReversalCandlestickResult {
+    return {
+      isDetected: false,
+      confidence: 0,
+      patternType: 'doji_reversal',
+      metadata: {
+        bodySize: 0,
+        upperWickSize: 0,
+        lowerWickSize: 0,
+        rejectionStrength: 0,
+        trendContext: 'sideways',
+        supportResistanceProximity: 100,
+        volumeConfirmation: false,
+        momentumExhaustion: 0,
+        recentVolatility: 0,
+        candleStrength: 0,
+        contextValidation: false,
+        patternCompleted: false,
+        requiresConfirmation: true
+      }
+    };
+  }
+
+  /**
+   * Create pattern signal for reversal candlestick patterns
+   */
+  private createReversalCandlestickSignal(
+    result: ReversalCandlestickResult,
+    strategyId: string,
+    symbol: string,
+    timeframe: TimeframeType,
+    candles: OHLCVCandles[]
+  ): InsertPatternSignal {
+    const latestCandle = result.candle || {
+      index: candles.length - 1,
+      price: this.safeParseFloat(candles[candles.length - 1].close),
+      timestamp: candles[candles.length - 1].timestamp,
+      volume: candles[candles.length - 1].volume,
+      isHigh: false
+    };
+
+    return {
+      strategyId,
+      symbol,
+      timeframe,
+      patternType: result.patternType,
+      confidence: result.confidence.toString(),
+      detectedAt: latestCandle.timestamp,
+      priceLevel: latestCandle.price.toString(),
+      metadata: {
+        ...result.metadata,
+        candle: {
+          index: latestCandle.index,
+          price: latestCandle.price,
+          timestamp: latestCandle.timestamp.toISOString(),
+          volume: latestCandle.volume
+        },
+        previousCandle: result.previousCandle ? {
+          index: result.previousCandle.index,
+          price: result.previousCandle.price,
+          timestamp: result.previousCandle.timestamp.toISOString(),
+          volume: result.previousCandle.volume
+        } : undefined,
+        confirmationCandle: result.confirmationCandle ? {
+          index: result.confirmationCandle.index,
+          price: result.confirmationCandle.price,
+          timestamp: result.confirmationCandle.timestamp.toISOString(),
+          volume: result.confirmationCandle.volume
+        } : undefined,
+        supportResistanceLevel: result.supportResistanceLevel,
+        detectionMethod: 'reversal_candlestick_momentum_analysis',
+        description: `${result.patternType} pattern with ${result.confidence.toFixed(1)}% confidence`
+      },
+      isActive: true
     };
   }
 }
