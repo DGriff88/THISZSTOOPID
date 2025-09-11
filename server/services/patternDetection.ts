@@ -40,12 +40,41 @@ export interface HeadAndShouldersResult {
   };
 }
 
+export interface ReversalFlagResult {
+  isDetected: boolean;
+  confidence: number;  // 0-100
+  patternType: 'reversal_flag_bearish' | 'reversal_flag_bullish';
+  poleStart?: PatternPoint;
+  poleEnd?: PatternPoint;
+  flagStart?: PatternPoint;
+  flagEnd?: PatternPoint;
+  supportResistanceLevel?: number;
+  breakoutLevel?: number;
+  metadata: {
+    poleSize: number;  // Size of the momentum move (pole)
+    poleDuration: number;  // Duration of momentum phase in candles
+    pullbackRatio: number;  // Ratio of pullbacks during pole phase (lower is better)
+    consolidationDuration: number;  // Duration of sideways movement
+    consolidationVolatility: number;  // Volatility during consolidation phase
+    volumeDecline: boolean;  // Whether volume declined during consolidation
+    supportResistanceStrength: number;  // Strength of the support/resistance level
+    momentumLossConfirmed: boolean;  // Whether momentum loss is confirmed
+    breakoutConfirmed: boolean;  // Whether breakout from flag is confirmed
+  };
+}
+
 export interface PatternDetectionConfig {
   minCandles: number;  // Minimum candles needed for detection
   lookbackPeriod: number;  // How far back to look for patterns
   minRejectionSize: number;  // Minimum rejection size as percentage
   volumeThreshold: number;  // Volume threshold for confirmation
   confidenceThreshold: number;  // Minimum confidence to trigger signal
+  // Reversal Flag specific config
+  minPoleSize: number;  // Minimum size of momentum move (pole) in percentage
+  maxPullbackRatio: number;  // Maximum pullback ratio during pole phase
+  minConsolidationDuration: number;  // Minimum consolidation duration in candles
+  maxConsolidationDuration: number;  // Maximum consolidation duration in candles
+  consolidationVolatilityThreshold: number;  // Maximum volatility during consolidation
 }
 
 export class HeadAndShouldersDetector {
@@ -60,6 +89,12 @@ export class HeadAndShouldersDetector {
       minRejectionSize: 2.0, // 2% minimum rejection
       volumeThreshold: 1.2, // 20% above average volume
       confidenceThreshold: 65.0, // 65% minimum confidence
+      // Reversal Flag specific defaults
+      minPoleSize: 5.0, // 5% minimum pole size
+      maxPullbackRatio: 0.3, // Max 30% pullback during pole
+      minConsolidationDuration: 5, // Min 5 candles consolidation
+      maxConsolidationDuration: 20, // Max 20 candles consolidation
+      consolidationVolatilityThreshold: 2.0, // Max 2% volatility during consolidation
       ...config
     };
   }
@@ -238,6 +273,38 @@ export class HeadAndShouldersDetector {
       );
       detectedPatterns.push(signal);
       this.recordSignal(symbol, bullishResult.patternType, timeframe);
+    }
+
+    // Detect bearish reversal flag patterns
+    const bearishFlagResult = this.detectBearishReversalFlag(sortedCandles);
+    if (bearishFlagResult.isDetected && 
+        bearishFlagResult.confidence >= this.config.confidenceThreshold &&
+        !this.isDuplicateSignal(symbol, bearishFlagResult.patternType, timeframe)) {
+      const signal = this.createReversalFlagSignal(
+        bearishFlagResult, 
+        strategyId, 
+        symbol, 
+        timeframe, 
+        sortedCandles
+      );
+      detectedPatterns.push(signal);
+      this.recordSignal(symbol, bearishFlagResult.patternType, timeframe);
+    }
+
+    // Detect bullish reversal flag patterns
+    const bullishFlagResult = this.detectBullishReversalFlag(sortedCandles);
+    if (bullishFlagResult.isDetected && 
+        bullishFlagResult.confidence >= this.config.confidenceThreshold &&
+        !this.isDuplicateSignal(symbol, bullishFlagResult.patternType, timeframe)) {
+      const signal = this.createReversalFlagSignal(
+        bullishFlagResult, 
+        strategyId, 
+        symbol, 
+        timeframe, 
+        sortedCandles
+      );
+      detectedPatterns.push(signal);
+      this.recordSignal(symbol, bullishFlagResult.patternType, timeframe);
     }
 
     return detectedPatterns;
@@ -981,5 +1048,713 @@ export class HeadAndShouldersDetector {
       },
       isActive: true
     };
+  }
+
+  /**
+   * Create pattern signal for reversal flag patterns
+   */
+  private createReversalFlagSignal(
+    result: ReversalFlagResult,
+    strategyId: string,
+    symbol: string,
+    timeframe: TimeframeType,
+    candles: OHLCVCandles[]
+  ): InsertPatternSignal {
+    const detectionTime = result.flagEnd ? 
+      result.flagEnd.timestamp : 
+      candles[candles.length - 1].timestamp;
+    
+    const priceLevel = result.breakoutLevel || result.supportResistanceLevel || 0;
+
+    return {
+      strategyId,
+      symbol,
+      patternType: result.patternType,
+      timeframe,
+      confidence: result.confidence.toString(),
+      detectedAt: detectionTime,
+      priceLevel: priceLevel.toString(),
+      metadata: {
+        ...result.metadata,
+        poleStartPrice: result.poleStart?.price,
+        poleEndPrice: result.poleEnd?.price,
+        flagStartPrice: result.flagStart?.price,
+        flagEndPrice: result.flagEnd?.price,
+        supportResistanceLevel: result.supportResistanceLevel,
+        breakoutLevel: result.breakoutLevel
+      },
+      isActive: true
+    };
+  }
+
+  /**
+   * Detect bearish reversal flag pattern
+   * Riley's focus: Strong upward momentum + consolidation at resistance + momentum loss
+   */
+  private detectBearishReversalFlag(candles: OHLCVCandles[]): ReversalFlagResult {
+    if (candles.length < this.config.minCandles) {
+      return this.createEmptyReversalFlagResult('reversal_flag_bearish');
+    }
+
+    // Scan for potential flag patterns in recent data
+    const scanStart = Math.max(0, candles.length - this.config.lookbackPeriod);
+    
+    for (let flagEndIndex = candles.length - 3; flagEndIndex >= scanStart + 15; flagEndIndex--) {
+      // Look backwards to find consolidation phase
+      const consolidationResult = this.findConsolidationPhase(
+        candles, 
+        flagEndIndex, 
+        true // isBearish
+      );
+
+      if (!consolidationResult.isValid) continue;
+
+      const flagStartIndex = consolidationResult.startIndex;
+      
+      // Look for the momentum pole before consolidation
+      const poleResult = this.analyzeMomentumPole(
+        candles, 
+        flagStartIndex, 
+        true // isBearish (upward pole)
+      );
+
+      if (!poleResult.isValid) continue;
+
+      // Validate support/resistance level
+      const srLevel = this.findSupportResistanceLevel(
+        candles, 
+        poleResult.endIndex, 
+        flagEndIndex, 
+        true // isBearish
+      );
+
+      if (!srLevel.isSignificant) continue;
+
+      // Check for breakout confirmation
+      const breakoutResult = this.checkFlagBreakout(
+        candles,
+        flagEndIndex,
+        srLevel.level,
+        true // isBearish (expect downward break)
+      );
+
+      // Calculate confidence
+      const confidence = this.calculateReversalFlagConfidence({
+        poleSize: poleResult.size,
+        poleDuration: poleResult.duration,
+        pullbackRatio: poleResult.pullbackRatio,
+        consolidationDuration: consolidationResult.duration,
+        consolidationVolatility: consolidationResult.volatility,
+        volumeDecline: consolidationResult.volumeDeclined,
+        supportResistanceStrength: srLevel.strength,
+        momentumLossConfirmed: consolidationResult.momentumLoss,
+        breakoutConfirmed: breakoutResult.hasBreakout,
+        breakoutStrength: breakoutResult.strength
+      }, true); // isBearish
+
+      if (confidence >= this.config.confidenceThreshold) {
+        return {
+          isDetected: true,
+          confidence,
+          patternType: 'reversal_flag_bearish',
+          poleStart: {
+            index: poleResult.startIndex,
+            price: this.safeParseFloat(candles[poleResult.startIndex].low),
+            timestamp: candles[poleResult.startIndex].timestamp,
+            volume: candles[poleResult.startIndex].volume,
+            isHigh: false
+          },
+          poleEnd: {
+            index: poleResult.endIndex,
+            price: this.safeParseFloat(candles[poleResult.endIndex].high),
+            timestamp: candles[poleResult.endIndex].timestamp,
+            volume: candles[poleResult.endIndex].volume,
+            isHigh: true
+          },
+          flagStart: {
+            index: flagStartIndex,
+            price: this.safeParseFloat(candles[flagStartIndex].high),
+            timestamp: candles[flagStartIndex].timestamp,
+            volume: candles[flagStartIndex].volume,
+            isHigh: true
+          },
+          flagEnd: {
+            index: flagEndIndex,
+            price: this.safeParseFloat(candles[flagEndIndex].low),
+            timestamp: candles[flagEndIndex].timestamp,
+            volume: candles[flagEndIndex].volume,
+            isHigh: false
+          },
+          supportResistanceLevel: srLevel.level,
+          breakoutLevel: breakoutResult.breakoutLevel,
+          metadata: {
+            poleSize: poleResult.size,
+            poleDuration: poleResult.duration,
+            pullbackRatio: poleResult.pullbackRatio,
+            consolidationDuration: consolidationResult.duration,
+            consolidationVolatility: consolidationResult.volatility,
+            volumeDecline: consolidationResult.volumeDeclined,
+            supportResistanceStrength: srLevel.strength,
+            momentumLossConfirmed: consolidationResult.momentumLoss,
+            breakoutConfirmed: breakoutResult.hasBreakout
+          }
+        };
+      }
+    }
+
+    return this.createEmptyReversalFlagResult('reversal_flag_bearish');
+  }
+
+  /**
+   * Detect bullish reversal flag pattern (inverted)
+   * Riley's focus: Strong downward momentum + consolidation at support + momentum loss
+   */
+  private detectBullishReversalFlag(candles: OHLCVCandles[]): ReversalFlagResult {
+    if (candles.length < this.config.minCandles) {
+      return this.createEmptyReversalFlagResult('reversal_flag_bullish');
+    }
+
+    // Scan for potential flag patterns in recent data
+    const scanStart = Math.max(0, candles.length - this.config.lookbackPeriod);
+    
+    for (let flagEndIndex = candles.length - 3; flagEndIndex >= scanStart + 15; flagEndIndex--) {
+      // Look backwards to find consolidation phase
+      const consolidationResult = this.findConsolidationPhase(
+        candles, 
+        flagEndIndex, 
+        false // isBearish (false for bullish)
+      );
+
+      if (!consolidationResult.isValid) continue;
+
+      const flagStartIndex = consolidationResult.startIndex;
+      
+      // Look for the momentum pole before consolidation
+      const poleResult = this.analyzeMomentumPole(
+        candles, 
+        flagStartIndex, 
+        false // isBearish (false = downward pole for bullish pattern)
+      );
+
+      if (!poleResult.isValid) continue;
+
+      // Validate support/resistance level
+      const srLevel = this.findSupportResistanceLevel(
+        candles, 
+        poleResult.endIndex, 
+        flagEndIndex, 
+        false // isBearish (false for bullish)
+      );
+
+      if (!srLevel.isSignificant) continue;
+
+      // Check for breakout confirmation
+      const breakoutResult = this.checkFlagBreakout(
+        candles,
+        flagEndIndex,
+        srLevel.level,
+        false // isBearish (false = expect upward break)
+      );
+
+      // Calculate confidence
+      const confidence = this.calculateReversalFlagConfidence({
+        poleSize: poleResult.size,
+        poleDuration: poleResult.duration,
+        pullbackRatio: poleResult.pullbackRatio,
+        consolidationDuration: consolidationResult.duration,
+        consolidationVolatility: consolidationResult.volatility,
+        volumeDecline: consolidationResult.volumeDeclined,
+        supportResistanceStrength: srLevel.strength,
+        momentumLossConfirmed: consolidationResult.momentumLoss,
+        breakoutConfirmed: breakoutResult.hasBreakout,
+        breakoutStrength: breakoutResult.strength
+      }, false); // isBearish = false
+
+      if (confidence >= this.config.confidenceThreshold) {
+        return {
+          isDetected: true,
+          confidence,
+          patternType: 'reversal_flag_bullish',
+          poleStart: {
+            index: poleResult.startIndex,
+            price: this.safeParseFloat(candles[poleResult.startIndex].high),
+            timestamp: candles[poleResult.startIndex].timestamp,
+            volume: candles[poleResult.startIndex].volume,
+            isHigh: true
+          },
+          poleEnd: {
+            index: poleResult.endIndex,
+            price: this.safeParseFloat(candles[poleResult.endIndex].low),
+            timestamp: candles[poleResult.endIndex].timestamp,
+            volume: candles[poleResult.endIndex].volume,
+            isHigh: false
+          },
+          flagStart: {
+            index: flagStartIndex,
+            price: this.safeParseFloat(candles[flagStartIndex].low),
+            timestamp: candles[flagStartIndex].timestamp,
+            volume: candles[flagStartIndex].volume,
+            isHigh: false
+          },
+          flagEnd: {
+            index: flagEndIndex,
+            price: this.safeParseFloat(candles[flagEndIndex].high),
+            timestamp: candles[flagEndIndex].timestamp,
+            volume: candles[flagEndIndex].volume,
+            isHigh: true
+          },
+          supportResistanceLevel: srLevel.level,
+          breakoutLevel: breakoutResult.breakoutLevel,
+          metadata: {
+            poleSize: poleResult.size,
+            poleDuration: poleResult.duration,
+            pullbackRatio: poleResult.pullbackRatio,
+            consolidationDuration: consolidationResult.duration,
+            consolidationVolatility: consolidationResult.volatility,
+            volumeDecline: consolidationResult.volumeDeclined,
+            supportResistanceStrength: srLevel.strength,
+            momentumLossConfirmed: consolidationResult.momentumLoss,
+            breakoutConfirmed: breakoutResult.hasBreakout
+          }
+        };
+      }
+    }
+
+    return this.createEmptyReversalFlagResult('reversal_flag_bullish');
+  }
+
+  /**
+   * Create empty reversal flag result
+   */
+  private createEmptyReversalFlagResult(patternType: 'reversal_flag_bearish' | 'reversal_flag_bullish'): ReversalFlagResult {
+    return {
+      isDetected: false,
+      confidence: 0,
+      patternType,
+      metadata: {
+        poleSize: 0,
+        poleDuration: 0,
+        pullbackRatio: 0,
+        consolidationDuration: 0,
+        consolidationVolatility: 0,
+        volumeDecline: false,
+        supportResistanceStrength: 0,
+        momentumLossConfirmed: false,
+        breakoutConfirmed: false
+      }
+    };
+  }
+
+  /**
+   * Find consolidation phase - sideways movement after momentum
+   * Riley's key factor: Transition from directional to sideways movement
+   */
+  private findConsolidationPhase(
+    candles: OHLCVCandles[], 
+    endIndex: number, 
+    isBearish: boolean
+  ): {
+    isValid: boolean;
+    startIndex: number;
+    duration: number;
+    volatility: number;
+    volumeDeclined: boolean;
+    momentumLoss: boolean;
+  } {
+    const maxDuration = this.config.maxConsolidationDuration;
+    const minDuration = this.config.minConsolidationDuration;
+    let bestStartIndex = -1;
+    let bestResult = { isValid: false, startIndex: -1, duration: 0, volatility: 0, volumeDeclined: false, momentumLoss: false };
+
+    // Look backwards for consolidation start
+    for (let duration = minDuration; duration <= maxDuration && endIndex - duration >= 0; duration++) {
+      const startIndex = endIndex - duration + 1;
+      
+      // Calculate price range during consolidation period
+      const prices = candles.slice(startIndex, endIndex + 1)
+        .map(c => ({
+          high: this.safeParseFloat(c.high),
+          low: this.safeParseFloat(c.low),
+          close: this.safeParseFloat(c.close)
+        }));
+
+      const maxPrice = Math.max(...prices.map(p => p.high));
+      const minPrice = Math.min(...prices.map(p => p.low));
+      const priceRange = ((maxPrice - minPrice) / minPrice) * 100;
+
+      // Check if volatility is within acceptable range (sideways movement)
+      if (priceRange > this.config.consolidationVolatilityThreshold) continue;
+
+      // Check volume decline during consolidation
+      const volumeDeclined = this.checkVolumeDecline(candles, startIndex, endIndex);
+      
+      // Check momentum loss compared to pre-consolidation period
+      const momentumLoss = this.checkMomentumLoss(candles, startIndex, endIndex, isBearish);
+
+      if (momentumLoss && priceRange <= this.config.consolidationVolatilityThreshold) {
+        bestResult = {
+          isValid: true,
+          startIndex,
+          duration,
+          volatility: priceRange,
+          volumeDeclined,
+          momentumLoss: true
+        };
+        break; // Take the first valid consolidation found
+      }
+    }
+
+    return bestResult;
+  }
+
+  /**
+   * Analyze momentum pole - strong directional movement with minimal pullbacks
+   * Riley's key factor: Strong momentum with no pullbacks increases chance to fail
+   */
+  private analyzeMomentumPole(
+    candles: OHLCVCandles[], 
+    flagStartIndex: number, 
+    isBearish: boolean
+  ): {
+    isValid: boolean;
+    startIndex: number;
+    endIndex: number;
+    size: number;
+    duration: number;
+    pullbackRatio: number;
+  } {
+    const maxPoleDuration = Math.min(25, flagStartIndex);
+    const minPoleDuration = 8;
+    
+    for (let duration = minPoleDuration; duration <= maxPoleDuration; duration++) {
+      const poleStartIndex = flagStartIndex - duration;
+      if (poleStartIndex < 0) break;
+
+      const poleSize = this.calculateMoveSize(
+        candles, 
+        poleStartIndex, 
+        flagStartIndex, 
+        isBearish
+      );
+
+      if (poleSize < this.config.minPoleSize) continue;
+
+      // Calculate pullback ratio during pole
+      const pullbackRatio = this.calculatePullbackRatio(
+        candles, 
+        poleStartIndex, 
+        flagStartIndex, 
+        isBearish
+      );
+
+      if (pullbackRatio <= this.config.maxPullbackRatio) {
+        return {
+          isValid: true,
+          startIndex: poleStartIndex,
+          endIndex: flagStartIndex,
+          size: poleSize,
+          duration,
+          pullbackRatio
+        };
+      }
+    }
+
+    return {
+      isValid: false,
+      startIndex: -1,
+      endIndex: -1,
+      size: 0,
+      duration: 0,
+      pullbackRatio: 1.0
+    };
+  }
+
+  /**
+   * Find major support/resistance level
+   * Riley's key factor: At a major resistance/support zone
+   */
+  private findSupportResistanceLevel(
+    candles: OHLCVCandles[], 
+    poleEndIndex: number, 
+    flagEndIndex: number, 
+    isBearish: boolean
+  ): {
+    isSignificant: boolean;
+    level: number;
+    strength: number;
+  } {
+    // Get price range during flag formation
+    const flagPrices = candles.slice(poleEndIndex, flagEndIndex + 1);
+    
+    let targetLevel: number;
+    if (isBearish) {
+      // For bearish pattern, resistance is at the top of consolidation
+      targetLevel = Math.max(...flagPrices.map(c => this.safeParseFloat(c.high)));
+    } else {
+      // For bullish pattern, support is at the bottom of consolidation
+      targetLevel = Math.min(...flagPrices.map(c => this.safeParseFloat(c.low)));
+    }
+
+    // Test how significant this level is by looking at historical price action
+    const lookbackPeriod = Math.min(50, poleEndIndex);
+    const historicalCandles = candles.slice(Math.max(0, poleEndIndex - lookbackPeriod), poleEndIndex);
+    
+    let touchCount = 0;
+    let rejectionCount = 0;
+    const tolerance = targetLevel * 0.005; // 0.5% tolerance
+
+    for (const candle of historicalCandles) {
+      const high = this.safeParseFloat(candle.high);
+      const low = this.safeParseFloat(candle.low);
+      const close = this.safeParseFloat(candle.close);
+
+      if (isBearish) {
+        // Test resistance level
+        if (high >= targetLevel - tolerance && high <= targetLevel + tolerance) {
+          touchCount++;
+          if (close < high - (high * 0.01)) { // 1% rejection
+            rejectionCount++;
+          }
+        }
+      } else {
+        // Test support level
+        if (low >= targetLevel - tolerance && low <= targetLevel + tolerance) {
+          touchCount++;
+          if (close > low + (low * 0.01)) { // 1% bounce
+            rejectionCount++;
+          }
+        }
+      }
+    }
+
+    // Calculate strength based on touches and rejections
+    const strength = (touchCount * 10) + (rejectionCount * 15);
+    const isSignificant = touchCount >= 2 && strength >= 25;
+
+    return {
+      isSignificant,
+      level: targetLevel,
+      strength
+    };
+  }
+
+  /**
+   * Check for flag breakout confirmation
+   */
+  private checkFlagBreakout(
+    candles: OHLCVCandles[],
+    flagEndIndex: number,
+    supportResistanceLevel: number,
+    isBearish: boolean
+  ): {
+    hasBreakout: boolean;
+    breakoutLevel: number;
+    strength: number;
+  } {
+    const lookAheadPeriod = Math.min(5, candles.length - flagEndIndex - 1);
+    let hasBreakout = false;
+    let maxBreakDistance = 0;
+    let breakoutLevel = supportResistanceLevel;
+
+    for (let i = flagEndIndex + 1; i <= flagEndIndex + lookAheadPeriod; i++) {
+      if (i >= candles.length) break;
+
+      try {
+        const close = this.safeParseFloat(candles[i].close);
+        const low = this.safeParseFloat(candles[i].low);
+        const high = this.safeParseFloat(candles[i].high);
+
+        if (isBearish) {
+          // For bearish flag, look for break below support/resistance
+          if (close < supportResistanceLevel || low < supportResistanceLevel) {
+            hasBreakout = true;
+            const breakDistance = Math.abs(Math.min(close, low) - supportResistanceLevel) / supportResistanceLevel;
+            if (breakDistance > maxBreakDistance) {
+              maxBreakDistance = breakDistance;
+              breakoutLevel = Math.min(close, low);
+            }
+          }
+        } else {
+          // For bullish flag, look for break above support/resistance
+          if (close > supportResistanceLevel || high > supportResistanceLevel) {
+            hasBreakout = true;
+            const breakDistance = Math.abs(Math.max(close, high) - supportResistanceLevel) / supportResistanceLevel;
+            if (breakDistance > maxBreakDistance) {
+              maxBreakDistance = breakDistance;
+              breakoutLevel = Math.max(close, high);
+            }
+          }
+        }
+      } catch (error) {
+        console.warn(`Error checking flag breakout at index ${i}: ${error}`);
+        continue;
+      }
+    }
+
+    return {
+      hasBreakout,
+      breakoutLevel,
+      strength: maxBreakDistance * 100
+    };
+  }
+
+  /**
+   * Calculate confidence for reversal flag pattern
+   * Based on Riley Coleman's key factors
+   */
+  private calculateReversalFlagConfidence(
+    factors: {
+      poleSize: number;
+      poleDuration: number;
+      pullbackRatio: number;
+      consolidationDuration: number;
+      consolidationVolatility: number;
+      volumeDecline: boolean;
+      supportResistanceStrength: number;
+      momentumLossConfirmed: boolean;
+      breakoutConfirmed: boolean;
+      breakoutStrength: number;
+    },
+    isBearish: boolean
+  ): number {
+    let confidence = 0;
+
+    // Riley's key factor: Strong momentum with no pullbacks (25 points max)
+    // Larger pole size gives higher confidence
+    confidence += Math.min(factors.poleSize, 25); // Direct percentage score
+    
+    // Minimal pullbacks during pole (crucial for pattern validity)
+    const pullbackBonus = (1 - factors.pullbackRatio) * 20; // Max 20 points
+    confidence += pullbackBonus;
+
+    // Riley's key factor: Transition from directional to sideways movement (20 points max)
+    if (factors.momentumLossConfirmed) {
+      confidence += 15; // Confirmed momentum loss
+    }
+    
+    // Lower volatility during consolidation is better
+    const volatilityScore = Math.max(0, (this.config.consolidationVolatilityThreshold - factors.consolidationVolatility)) * 2.5;
+    confidence += Math.min(volatilityScore, 10);
+
+    // Riley's key factor: At major resistance/support zone (15 points max)
+    confidence += Math.min(factors.supportResistanceStrength * 0.3, 15);
+
+    // Volume decline during consolidation (good sign)
+    if (factors.volumeDecline) {
+      confidence += 10;
+    }
+
+    // Optimal consolidation duration (moderate is best)
+    const optimalDuration = (this.config.minConsolidationDuration + this.config.maxConsolidationDuration) / 2;
+    const durationFactor = 1 - Math.abs(factors.consolidationDuration - optimalDuration) / optimalDuration;
+    confidence += durationFactor * 5;
+
+    // Breakout confirmation (strong bonus if confirmed)
+    if (factors.breakoutConfirmed) {
+      confidence += 10; // Base breakout bonus
+      confidence += Math.min(factors.breakoutStrength * 2, 10); // Strength bonus
+    } else {
+      // Small penalty for no breakout (allow early detection)
+      confidence -= 2;
+    }
+
+    return Math.max(0, Math.min(100, confidence));
+  }
+
+  // Helper methods for consolidation and momentum analysis
+
+  /**
+   * Check if volume declined during consolidation period
+   */
+  private checkVolumeDecline(candles: OHLCVCandles[], startIndex: number, endIndex: number): boolean {
+    if (endIndex - startIndex < 3) return false;
+
+    const midPoint = Math.floor((startIndex + endIndex) / 2);
+    const earlyVolume = this.calculateAverageVolume(candles, startIndex, midPoint);
+    const lateVolume = this.calculateAverageVolume(candles, midPoint + 1, endIndex);
+
+    return lateVolume < earlyVolume * 0.8; // 20% decline
+  }
+
+  /**
+   * Check for momentum loss during consolidation
+   */
+  private checkMomentumLoss(
+    candles: OHLCVCandles[], 
+    startIndex: number, 
+    endIndex: number, 
+    isBearish: boolean
+  ): boolean {
+    if (endIndex - startIndex < 3) return false;
+
+    // Compare momentum before and during consolidation
+    const preMomentumPeriod = Math.min(10, startIndex);
+    const preMomentum = this.calculateLocalMomentum(candles, startIndex - preMomentumPeriod, isBearish);
+    const consolidationMomentum = this.calculateLocalMomentum(candles, Math.floor((startIndex + endIndex) / 2), isBearish);
+
+    // Significant momentum reduction indicates pattern formation
+    return Math.abs(consolidationMomentum) < Math.abs(preMomentum) * 0.3; // 70% momentum loss
+  }
+
+  /**
+   * Calculate move size between two points
+   */
+  private calculateMoveSize(
+    candles: OHLCVCandles[], 
+    startIndex: number, 
+    endIndex: number, 
+    isBearish: boolean
+  ): number {
+    if (startIndex >= endIndex || endIndex >= candles.length) return 0;
+
+    if (isBearish) {
+      // For bearish pattern, measure upward move (pole up)
+      const startLow = this.safeParseFloat(candles[startIndex].low);
+      const endHigh = this.safeParseFloat(candles[endIndex].high);
+      return ((endHigh - startLow) / startLow) * 100;
+    } else {
+      // For bullish pattern, measure downward move (pole down)
+      const startHigh = this.safeParseFloat(candles[startIndex].high);
+      const endLow = this.safeParseFloat(candles[endIndex].low);
+      return ((startHigh - endLow) / startHigh) * 100;
+    }
+  }
+
+  /**
+   * Calculate pullback ratio during momentum phase
+   * Riley's key: "Strong momentum with no pullbacks increases chance to fail"
+   */
+  private calculatePullbackRatio(
+    candles: OHLCVCandles[], 
+    startIndex: number, 
+    endIndex: number, 
+    isBearish: boolean
+  ): number {
+    if (startIndex >= endIndex) return 1.0;
+
+    let totalMove = 0;
+    let adverseMove = 0;
+
+    for (let i = startIndex; i < endIndex; i++) {
+      const currentClose = this.safeParseFloat(candles[i].close);
+      const nextClose = this.safeParseFloat(candles[i + 1].close);
+      const move = nextClose - currentClose;
+
+      totalMove += Math.abs(move);
+
+      if (isBearish) {
+        // For bearish pattern (upward pole), adverse move is downward
+        if (move < 0) {
+          adverseMove += Math.abs(move);
+        }
+      } else {
+        // For bullish pattern (downward pole), adverse move is upward
+        if (move > 0) {
+          adverseMove += Math.abs(move);
+        }
+      }
+    }
+
+    return totalMove > 0 ? adverseMove / totalMove : 1.0;
   }
 }

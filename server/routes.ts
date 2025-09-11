@@ -543,5 +543,191 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Test endpoint for Reversal Flag pattern detection
+  app.get("/api/test/reversal-flags", async (req, res) => {
+    try {
+      console.log("🚩 Testing Reversal Flag Pattern Detection...");
+      
+      // Create detector with test-friendly configuration
+      const detector = new HeadAndShouldersDetector({
+        minCandles: 25,
+        confidenceThreshold: 25.0,
+        minPoleSize: 5.0,
+        maxPullbackRatio: 0.3,
+        minConsolidationDuration: 5,
+        maxConsolidationDuration: 15,
+        consolidationVolatilityThreshold: 2.5
+      });
+
+      const results = {
+        bearishFlag: { detected: false, patterns: [], error: null },
+        bullishFlag: { detected: false, patterns: [], error: null }
+      };
+
+      // Generate and test bearish reversal flag pattern
+      try {
+        console.log("📈 Testing Bearish Reversal Flag...");
+        const bearishTestData = generateBearishReversalFlagTestData();
+        
+        const bearishPatterns = await detector.detectPatterns(
+          bearishTestData,
+          'test-bearish-flag',
+          'BEAR_TEST',
+          '1h'
+        );
+
+        results.bearishFlag.patterns = bearishPatterns.filter(p => p.patternType === 'reversal_flag_bearish');
+        results.bearishFlag.detected = results.bearishFlag.patterns.length > 0;
+        
+        console.log(`   Bearish patterns detected: ${results.bearishFlag.patterns.length}`);
+      } catch (error) {
+        console.error("❌ Error in bearish flag test:", error);
+        results.bearishFlag.error = String(error);
+      }
+
+      // Generate and test bullish reversal flag pattern
+      try {
+        console.log("📉 Testing Bullish Reversal Flag...");
+        const bullishTestData = generateBullishReversalFlagTestData();
+        
+        const bullishPatterns = await detector.detectPatterns(
+          bullishTestData,
+          'test-bullish-flag',
+          'BULL_TEST',
+          '1h'
+        );
+
+        results.bullishFlag.patterns = bullishPatterns.filter(p => p.patternType === 'reversal_flag_bullish');
+        results.bullishFlag.detected = results.bullishFlag.patterns.length > 0;
+        
+        console.log(`   Bullish patterns detected: ${results.bullishFlag.patterns.length}`);
+      } catch (error) {
+        console.error("❌ Error in bullish flag test:", error);
+        results.bullishFlag.error = String(error);
+      }
+
+      console.log("🎯 Reversal Flag test completed!");
+      res.json({
+        success: true,
+        message: "Reversal Flag pattern detection test completed",
+        results: results,
+        implementation: {
+          bearishDetected: results.bearishFlag.detected,
+          bullishDetected: results.bullishFlag.detected,
+          totalPatterns: results.bearishFlag.patterns.length + results.bullishFlag.patterns.length,
+          rileyFactorsImplemented: [
+            "Strong momentum with minimal pullbacks",
+            "Major resistance/support zone validation", 
+            "Directional to sideways movement transition",
+            "Momentum loss confirmation",
+            "Volume decline during consolidation",
+            "Confidence scoring based on key factors"
+          ]
+        }
+      });
+
+    } catch (error) {
+      console.error("❌ Test endpoint error:", error);
+      res.status(500).json({ error: "Test failed", details: String(error) });
+    }
+  });
+
+  // Helper functions for generating test data
+  function generateBearishReversalFlagTestData(): OHLCVCandles[] {
+    const basePrice = 100;
+    const candles: OHLCVCandles[] = [];
+    
+    // Strong momentum pole: Strong upward move with minimal pullbacks
+    let currentPrice = basePrice;
+    for (let i = 0; i < 15; i++) {
+      const upMove = 3 + Math.random() * 2;
+      const pullback = Math.random() * 0.3; // Minimal pullbacks
+      currentPrice += upMove - pullback;
+      
+      candles.push({
+        id: `bearish-${i}`,
+        symbol: 'BEAR_TEST',
+        timeframe: '1h',
+        open: (currentPrice - upMove).toString(),
+        high: (currentPrice + 0.5).toString(),
+        low: (currentPrice - upMove - 0.3).toString(),
+        close: currentPrice.toString(),
+        volume: 1500 + Math.floor(Math.random() * 800),
+        timestamp: new Date(Date.now() + i * 60 * 60 * 1000)
+      });
+    }
+    
+    const resistanceLevel = currentPrice + 2;
+    
+    // Consolidation phase: Sideways movement at resistance
+    for (let i = 15; i < 25; i++) {
+      const flagProgress = (i - 15) / 10;
+      const volatility = 1.5 * (1 - flagProgress * 0.5);
+      const flagPrice = resistanceLevel + (Math.sin((i - 15) * 0.6) * volatility);
+      
+      candles.push({
+        id: `bearish-${i}`,
+        symbol: 'BEAR_TEST',
+        timeframe: '1h',
+        open: (flagPrice - 0.2).toString(),
+        high: (flagPrice + volatility * 0.4).toString(),
+        low: (flagPrice - volatility * 0.4).toString(),
+        close: flagPrice.toString(),
+        volume: Math.floor(900 * (1 - flagProgress * 0.3)), // Declining volume
+        timestamp: new Date(Date.now() + i * 60 * 60 * 1000)
+      });
+    }
+    
+    return candles;
+  }
+
+  function generateBullishReversalFlagTestData(): OHLCVCandles[] {
+    const basePrice = 200;
+    const candles: OHLCVCandles[] = [];
+    
+    // Strong momentum pole: Strong downward move with minimal pullbacks
+    let currentPrice = basePrice;
+    for (let i = 0; i < 15; i++) {
+      const downMove = 3 + Math.random() * 2;
+      const pullback = Math.random() * 0.3; // Minimal pullbacks
+      currentPrice -= downMove - pullback;
+      
+      candles.push({
+        id: `bullish-${i}`,
+        symbol: 'BULL_TEST',
+        timeframe: '1h',
+        open: (currentPrice + downMove).toString(),
+        high: (currentPrice + downMove + 0.3).toString(),
+        low: (currentPrice - 0.5).toString(),
+        close: currentPrice.toString(),
+        volume: 1500 + Math.floor(Math.random() * 800),
+        timestamp: new Date(Date.now() + i * 60 * 60 * 1000)
+      });
+    }
+    
+    const supportLevel = currentPrice - 2;
+    
+    // Consolidation phase: Sideways movement at support
+    for (let i = 15; i < 25; i++) {
+      const flagProgress = (i - 15) / 10;
+      const volatility = 1.5 * (1 - flagProgress * 0.5);
+      const flagPrice = supportLevel + (Math.sin((i - 15) * 0.6) * volatility);
+      
+      candles.push({
+        id: `bullish-${i}`,
+        symbol: 'BULL_TEST',
+        timeframe: '1h',
+        open: (flagPrice + 0.2).toString(),
+        high: (flagPrice + volatility * 0.4).toString(),
+        low: (flagPrice - volatility * 0.4).toString(),
+        close: flagPrice.toString(),
+        volume: Math.floor(900 * (1 - flagProgress * 0.3)), // Declining volume
+        timestamp: new Date(Date.now() + i * 60 * 60 * 1000)
+      });
+    }
+    
+    return candles;
+  }
+
   return httpServer;
 }
