@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { initializeAlpacaService, getAlpacaService } from "./services/alpaca";
+import { initializeSchwabService, getSchwabService } from "./services/schwab";
 import { TradingWebSocketService } from "./services/websocket";
 import { HeadAndShouldersDetector } from "./services/patternDetection";
 import { 
@@ -14,6 +15,7 @@ import {
   type OHLCVCandles,
   type InsertOHLCVCandles,
   PATTERN_TYPES,
+  STRATEGY_TYPES,
   type PatternConfig,
   type PatternOutcome
 } from "@shared/schema";
@@ -22,11 +24,24 @@ import { z } from "zod";
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
 
-  // Initialize Alpaca service
+  // Initialize Schwab service  
+  const schwabAppKey = process.env.SCHWAB_APP_KEY || "";
+  const schwabAppSecret = process.env.SCHWAB_APP_SECRET || "";
+  const schwabRefreshToken = process.env.SCHWAB_REFRESH_TOKEN || "";
+  
+  if (schwabAppKey && schwabAppSecret) {
+    initializeSchwabService({
+      appKey: schwabAppKey,
+      appSecret: schwabAppSecret,
+      refreshToken: schwabRefreshToken,
+    });
+  }
+
+  // Legacy Alpaca support (keep for fallback)
   const alpacaApiKey = process.env.ALPACA_API_KEY || process.env.VITE_ALPACA_API_KEY || "";
   const alpacaApiSecret = process.env.ALPACA_API_SECRET || process.env.VITE_ALPACA_API_SECRET || "";
   
-  if (alpacaApiKey && alpacaApiSecret) {
+  if (alpacaApiKey && alpacaApiSecret && !schwabAppKey) {
     initializeAlpacaService({
       apiKey: alpacaApiKey,
       apiSecret: alpacaApiSecret,
@@ -36,6 +51,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Initialize WebSocket service
   const wsService = new TradingWebSocketService(httpServer);
+
+  // Broker service helper
+  const getBrokerService = () => {
+    if (schwabAppKey && schwabAppSecret) {
+      try {
+        return { type: 'schwab' as const, service: getSchwabService() };
+      } catch (error) {
+        console.warn('Schwab service not available, falling back to Alpaca');
+      }
+    }
+    
+    if (alpacaApiKey && alpacaApiSecret) {
+      try {
+        return { type: 'alpaca' as const, service: getAlpacaService() };
+      } catch (error) {
+        console.warn('Alpaca service not available');
+      }
+    }
+    
+    return null;
+  };
+
+  // Helper to check if broker is available
+  const requireBroker = (req: any, res: any, next: any) => {
+    const broker = getBrokerService();
+    if (!broker) {
+      return res.status(503).json({ 
+        error: "No broker service configured", 
+        message: "Please configure Schwab or Alpaca API credentials" 
+      });
+    }
+    req.broker = broker;
+    next();
+  };
 
   // Authentication middleware (simplified for demo)
   const requireAuth = (req: any, res: any, next: any) => {
@@ -202,14 +251,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Market data endpoints
-  app.get("/api/market/quote/:symbol", async (req, res) => {
+  app.get("/api/market/quote/:symbol", requireBroker, async (req: any, res) => {
     try {
-      if (!alpacaApiKey || !alpacaApiSecret) {
-        return res.status(500).json({ error: "Alpaca API credentials not configured" });
-      }
-
-      const alpaca = getAlpacaService();
-      const quote = await alpaca.getQuote(req.params.symbol);
+      const { service } = req.broker;
+      const quote = await service.getQuote(req.params.symbol);
       res.json(quote);
     } catch (error) {
       console.error("Error getting quote:", error);
@@ -219,12 +264,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/market/status", async (req, res) => {
     try {
-      if (!alpacaApiKey || !alpacaApiSecret) {
+      const broker = getBrokerService();
+      if (!broker) {
         return res.json({ isOpen: false, error: "API credentials not configured" });
       }
-
-      const alpaca = getAlpacaService();
-      const isOpen = await alpaca.isMarketOpen();
+      
+      const { service } = broker;
+      const isOpen = await service.isMarketOpen();
       res.json({ isOpen });
     } catch (error) {
       console.error("Error getting market status:", error);
@@ -232,43 +278,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Alpaca integration endpoints
-  app.get("/api/alpaca/account", requireAuth, async (req: any, res) => {
+  // Broker integration endpoints (Schwab/Alpaca)
+  app.get("/api/broker/account", requireAuth, requireBroker, async (req: any, res) => {
     try {
-      if (!alpacaApiKey || !alpacaApiSecret) {
-        return res.status(500).json({ error: "Alpaca API credentials not configured" });
-      }
-
-      const alpaca = getAlpacaService();
-      const account = await alpaca.getAccount();
-      res.json(account);
+      const { type, service } = req.broker;
+      const account = await service.getAccount();
+      res.json({ broker: type, account });
     } catch (error) {
-      console.error("Error getting Alpaca account:", error);
+      console.error("Error getting broker account:", error);
       res.status(500).json({ error: "Failed to get account info" });
     }
   });
 
-  app.get("/api/alpaca/positions", requireAuth, async (req: any, res) => {
+  app.get("/api/broker/positions", requireAuth, requireBroker, async (req: any, res) => {
     try {
-      if (!alpacaApiKey || !alpacaApiSecret) {
-        return res.status(500).json({ error: "Alpaca API credentials not configured" });
-      }
-
-      const alpaca = getAlpacaService();
-      const positions = await alpaca.getPositions();
-      res.json(positions);
+      const { type, service } = req.broker;
+      const positions = await service.getPositions();
+      res.json({ broker: type, positions });
     } catch (error) {
-      console.error("Error getting Alpaca positions:", error);
+      console.error("Error getting broker positions:", error);
       res.status(500).json({ error: "Failed to get positions" });
     }
   });
 
-  app.post("/api/alpaca/orders", requireAuth, async (req: any, res) => {
+  app.post("/api/broker/orders", requireAuth, requireBroker, async (req: any, res) => {
     try {
-      if (!alpacaApiKey || !alpacaApiSecret) {
-        return res.status(500).json({ error: "Alpaca API credentials not configured" });
-      }
-
       // VALIDATION: Basic validation for required fields
       const { symbol, side, qty, type = 'market' } = req.body;
       if (!symbol || !side || !qty) {
@@ -279,8 +313,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Side must be 'buy' or 'sell'" });
       }
 
-      const alpaca = getAlpacaService();
-      const order = await alpaca.createOrder(req.body);
+      const { type: brokerType, service } = req.broker;
+      
+      // Handle different broker order formats
+      let order;
+      if (brokerType === 'schwab') {
+        // Get account numbers for Schwab
+        const accounts = await service.getAccountNumbers();
+        const accountNumber = accounts[0]?.accountNumber;
+        
+        if (!accountNumber) {
+          return res.status(500).json({ error: "No Schwab account found" });
+        }
+
+        order = await service.createOrder(accountNumber, {
+          symbol,
+          quantity: parseInt(qty),
+          side: side.toUpperCase() as 'BUY' | 'SELL',
+          type: type.toUpperCase() as 'MARKET' | 'LIMIT',
+          timeInForce: 'DAY',
+          ...(type === 'limit' && { price: req.body.limit_price }),
+        });
+      } else {
+        // Alpaca format
+        order = await service.createOrder(req.body);
+      }
       
       // Create trade record
       await storage.createTrade({
@@ -290,17 +347,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         quantity: req.body.qty,
         price: req.body.limit_price || '0',
         executedAt: new Date(),
-        alpacaOrderId: order.id,
+        alpacaOrderId: brokerType === 'alpaca' ? order.id : null,
         status: 'pending',
         isPaperTrade: true,
       });
       
-      res.json(order);
+      res.json({ broker: brokerType, order });
     } catch (error) {
       if (error instanceof z.ZodError) {
         res.status(400).json({ error: "Invalid order data", details: error.errors });
       } else {
-        console.error("Error creating Alpaca order:", error);
+        console.error("Error creating broker order:", error);
         res.status(500).json({ error: "Failed to create order" });
       }
     }
@@ -315,17 +372,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
         await storage.updateStrategy(strategy.id, { isActive: false });
       }
 
-      // Cancel all open orders if Alpaca is configured
-      if (alpacaApiKey && alpacaApiSecret) {
-        try {
-          const alpaca = getAlpacaService();
-          const openOrders = await alpaca.getOrders('open');
-          for (const order of openOrders) {
-            await alpaca.cancelOrder(order.id);
+      // Cancel all open orders if broker is configured
+      try {
+        const broker = getBrokerService();
+        if (broker) {
+          const { type, service } = broker;
+          
+          if (type === 'schwab') {
+            const accounts = await service.getAccountNumbers();
+            for (const account of accounts) {
+              const openOrders = await service.getOrders(account.accountNumber, 'PENDING');
+              for (const order of openOrders) {
+                await service.cancelOrder(account.accountNumber, order.orderId.toString());
+              }
+            }
+          } else {
+            // Alpaca
+            const openOrders = await service.getOrders('open');
+            for (const order of openOrders) {
+              await service.cancelOrder(order.id);
+            }
           }
-        } catch (error) {
-          console.error("Error canceling orders during emergency stop:", error);
         }
+      } catch (error) {
+        console.error("Error canceling orders during emergency stop:", error);
       }
 
       res.json({ success: true, message: "Emergency stop executed" });
