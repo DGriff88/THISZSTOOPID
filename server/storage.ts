@@ -23,7 +23,8 @@ import {
   type PatternOutcome,
   type InsertPatternOutcome,
   type PatternBacktestRequest,
-  type PatternBacktestResult
+  type PatternBacktestResult,
+  type PatternPerformanceMetrics
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -525,9 +526,9 @@ export class MemStorage implements IStorage {
         activePatterns: activeSignals.length,
         patternTypes,
         topPerformingPatterns: performanceMetrics
-          .sort((a, b) => b.successRate - a.successRate)
+          .sort((a: PatternPerformanceMetrics, b: PatternPerformanceMetrics) => b.successRate - a.successRate)
           .slice(0, 5)
-          .map(p => ({
+          .map((p: PatternPerformanceMetrics) => ({
             type: p.patternType,
             successRate: p.successRate,
             avgProfitLoss: p.averageProfitLoss
