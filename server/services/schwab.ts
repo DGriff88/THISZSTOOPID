@@ -172,13 +172,20 @@ export class SchwabService {
   }
 
   // OAuth flow for initial authentication
-  getAuthUrl(): string {
-    const callbackUrl = encodeURIComponent('https://127.0.0.1:3000/auth/callback');
-    return `${this.baseUrl}/oauth/authorize?client_id=${this.appKey}&redirect_uri=${callbackUrl}&response_type=code`;
+  getAuthUrl(redirectUri?: string): string {
+    const domain = process.env.REPLIT_DEV_DOMAIN || 'localhost:5000';
+    const protocol = domain.includes('replit.dev') ? 'https://' : 'http://';
+    const defaultRedirectUri = redirectUri || `${protocol}${domain}/auth/callback`;
+    const callbackUrl = encodeURIComponent(defaultRedirectUri);
+    return `${this.baseUrl}/oauth/authorize?client_id=${this.appKey}&redirect_uri=${callbackUrl}&response_type=code&scope=api`;
   }
 
-  async exchangeCodeForTokens(authCode: string): Promise<{ access_token: string; refresh_token: string }> {
+  async exchangeCodeForTokens(authCode: string, redirectUri?: string): Promise<{ access_token: string; refresh_token: string }> {
     const credentials = Buffer.from(`${this.appKey}:${this.appSecret}`).toString('base64');
+    
+    const domain = process.env.REPLIT_DEV_DOMAIN || 'localhost:5000';
+    const protocol = domain.includes('replit.dev') ? 'https://' : 'http://';
+    const defaultRedirectUri = redirectUri || `${protocol}${domain}/auth/callback`;
     
     const response = await fetch(`${this.baseUrl}/oauth/token`, {
       method: 'POST',
@@ -189,7 +196,7 @@ export class SchwabService {
       body: new URLSearchParams({
         grant_type: 'authorization_code',
         code: authCode,
-        redirect_uri: 'https://127.0.0.1:3000/auth/callback',
+        redirect_uri: defaultRedirectUri,
       }),
     });
 

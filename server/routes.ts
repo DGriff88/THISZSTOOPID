@@ -86,6 +86,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
     next();
   };
 
+  // Helper to check authentication and provide OAuth guidance
+  const requireBrokerAuth = async (req: any, res: any, next: any) => {
+    const broker = getBrokerService();
+    if (!broker) {
+      return res.status(503).json({ 
+        error: "No broker service configured", 
+        message: "Please configure Schwab or Alpaca API credentials" 
+      });
+    }
+    
+    req.broker = broker;
+    
+    // For Schwab, check if we have valid tokens
+    if (broker.type === 'schwab') {
+      try {
+        // This will throw if no valid tokens
+        await broker.service.ensureAuthenticated();
+      } catch (error) {
+        return res.status(401).json({ 
+          error: "Authentication required", 
+          message: "Please complete OAuth authentication",
+          authUrl: `/api/auth/schwab/start`
+        });
+      }
+    }
+    
+    next();
+  };
+
   // Authentication middleware (simplified for demo)
   const requireAuth = (req: any, res: any, next: any) => {
     req.userId = 'demo-user-1'; // Simplified auth for demo
@@ -251,7 +280,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Market data endpoints
-  app.get("/api/market/quote/:symbol", requireBroker, async (req: any, res) => {
+  app.get("/api/market/quote/:symbol", requireBrokerAuth, async (req: any, res) => {
     try {
       const { service } = req.broker;
       const quote = await service.getQuote(req.params.symbol);
@@ -279,7 +308,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Broker integration endpoints (Schwab/Alpaca)
-  app.get("/api/broker/account", requireAuth, requireBroker, async (req: any, res) => {
+  app.get("/api/broker/account", requireAuth, requireBrokerAuth, async (req: any, res) => {
     try {
       const { type, service } = req.broker;
       const account = await service.getAccount();
@@ -290,7 +319,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/broker/positions", requireAuth, requireBroker, async (req: any, res) => {
+  app.get("/api/broker/positions", requireAuth, requireBrokerAuth, async (req: any, res) => {
     try {
       const { type, service } = req.broker;
       const positions = await service.getPositions();
@@ -301,7 +330,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/broker/orders", requireAuth, requireBroker, async (req: any, res) => {
+  app.post("/api/broker/orders", requireAuth, requireBrokerAuth, async (req: any, res) => {
     try {
       // VALIDATION: Basic validation for required fields
       const { symbol, side, qty, type = 'market' } = req.body;
