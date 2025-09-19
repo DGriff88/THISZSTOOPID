@@ -25,8 +25,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
 
   // Initialize Schwab service  
-  const schwabAppKey = process.env.SCHWAB_APP_KEY || "";
-  const schwabAppSecret = process.env.SCHWAB_APP_SECRET || "";
+  const schwabAppKey = process.env.SCHWAB_APP_KEY || process.env.SCHWAB || "";
+  const schwabAppSecret = process.env.SCHWAB_APP_SECRET || process.env.schwabsecret || "";
   const schwabRefreshToken = process.env.SCHWAB_REFRESH_TOKEN || "";
   
   if (schwabAppKey && schwabAppSecret) {
@@ -1454,6 +1454,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
     
     return candles;
   }
+
+  // Schwab OAuth endpoints
+  app.get("/api/auth/schwab/start", (req, res) => {
+    try {
+      const broker = getBrokerService();
+      if (!broker || broker.type !== 'schwab') {
+        return res.status(503).json({ error: "Schwab service not available" });
+      }
+
+      const authUrl = broker.service.getAuthUrl();
+      res.json({ authUrl });
+    } catch (error) {
+      console.error("Error starting Schwab OAuth:", error);
+      res.status(500).json({ error: "Failed to start OAuth flow" });
+    }
+  });
+
+  app.post("/api/auth/schwab/callback", async (req, res) => {
+    try {
+      const { code } = req.body;
+      if (!code) {
+        return res.status(400).json({ error: "Authorization code required" });
+      }
+
+      const broker = getBrokerService();
+      if (!broker || broker.type !== 'schwab') {
+        return res.status(503).json({ error: "Schwab service not available" });
+      }
+
+      const tokens = await broker.service.exchangeCodeForTokens(code);
+      
+      // In a real app, you'd save these tokens securely to your user's account
+      // For now, we'll just return success
+      res.json({ 
+        success: true, 
+        message: "OAuth completed successfully",
+        // Don't return actual tokens for security
+        hasRefreshToken: !!tokens.refresh_token 
+      });
+    } catch (error) {
+      console.error("Error in Schwab OAuth callback:", error);
+      res.status(500).json({ error: "Failed to complete OAuth flow" });
+    }
+  });
 
   return httpServer;
 }
