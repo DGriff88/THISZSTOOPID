@@ -38,7 +38,11 @@ import {
   type PortfolioHolding,
   type InsertPortfolioHolding,
   type EconomicEvent,
-  type InsertEconomicEvent
+  type InsertEconomicEvent,
+  type AlgorithmicStrategy,
+  type InsertAlgorithmicStrategy,
+  type StrategyStockPick,
+  type InsertStrategyStockPick
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -135,6 +139,28 @@ export interface IStorage {
   getRuleViolations(userId: string, limit?: number): Promise<RuleViolation[]>;
   getActiveViolations(userId: string): Promise<RuleViolation[]>;
   acknowledgeViolation(id: string): Promise<RuleViolation | undefined>;
+
+  // Strategic Portfolio Analysis
+  createStrategicAnalysis(userId: string, analysis: InsertStrategicAnalysis): Promise<StrategicAnalysis>;
+  getLatestStrategicAnalysis(userId: string): Promise<StrategicAnalysis | null>;
+  getStrategicAnalysisHistory(userId: string): Promise<StrategicAnalysis[]>;
+  createPortfolioHolding(holding: InsertPortfolioHolding): Promise<PortfolioHolding>;
+  getPortfolioHoldings(userId: string): Promise<PortfolioHolding[]>;
+  createEconomicEvent(event: InsertEconomicEvent): Promise<EconomicEvent>;
+  getUpcomingEconomicEvents(): Promise<EconomicEvent[]>;
+
+  // Algorithmic Trading Strategies
+  createAlgorithmicStrategy(strategy: InsertAlgorithmicStrategy): Promise<AlgorithmicStrategy>;
+  getAlgorithmicStrategies(userId: string): Promise<AlgorithmicStrategy[]>;
+  getAlgorithmicStrategy(id: string): Promise<AlgorithmicStrategy | null>;
+  updateAlgorithmicStrategy(id: string, updates: Partial<InsertAlgorithmicStrategy>): Promise<AlgorithmicStrategy>;
+  deleteAlgorithmicStrategy(id: string): Promise<void>;
+  
+  // Strategy Stock Picks
+  createStrategyStockPick(pick: InsertStrategyStockPick): Promise<StrategyStockPick>;
+  getStrategyStockPicks(strategyId: string): Promise<StrategyStockPick[]>;
+  getActiveStockPicks(userId: string): Promise<StrategyStockPick[]>;
+  updateStockPickStatus(id: string, status: string): Promise<void>;
 }
 
 export class MemStorage implements IStorage {
@@ -156,6 +182,9 @@ export class MemStorage implements IStorage {
   private strategicAnalyses: Map<string, StrategicAnalysis>;
   private portfolioHoldings: Map<string, PortfolioHolding>;
   private economicEvents: Map<string, EconomicEvent>;
+  // Algorithmic Strategies storage
+  private algorithmicStrategies: Map<string, AlgorithmicStrategy>;
+  private strategyStockPicks: Map<string, StrategyStockPick>;
 
   constructor() {
     this.users = new Map();
@@ -176,6 +205,9 @@ export class MemStorage implements IStorage {
     this.strategicAnalyses = new Map();
     this.portfolioHoldings = new Map();
     this.economicEvents = new Map();
+    // Algorithmic Strategies storage
+    this.algorithmicStrategies = new Map();
+    this.strategyStockPicks = new Map();
 
     // Initialize with a demo user
     this.initializeDemoData();
@@ -1120,6 +1152,104 @@ export class MemStorage implements IStorage {
     return Array.from(this.economicEvents.values())
       .filter(event => event.category === category)
       .sort((a, b) => a.eventDate.getTime() - b.eventDate.getTime());
+  }
+
+  // Algorithmic Trading Strategies Implementation
+  async createAlgorithmicStrategy(insertStrategy: InsertAlgorithmicStrategy): Promise<AlgorithmicStrategy> {
+    const id = randomUUID();
+    const strategy: AlgorithmicStrategy = {
+      ...insertStrategy,
+      id,
+      dailyLossLimit: insertStrategy.dailyLossLimit.toString(),
+      maxRiskPerTrade: insertStrategy.maxRiskPerTrade.toString(),
+      riskRewardMin: insertStrategy.riskRewardMin.toString(),
+      dailyTarget: insertStrategy.dailyTarget.toString(),
+      weeklyBaseline: insertStrategy.weeklyBaseline.toString(),
+      weeklyStretch: insertStrategy.weeklyStretch.toString(),
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    this.algorithmicStrategies.set(id, strategy);
+    return strategy;
+  }
+
+  async getAlgorithmicStrategies(userId: string): Promise<AlgorithmicStrategy[]> {
+    return Array.from(this.algorithmicStrategies.values())
+      .filter(strategy => strategy.userId === userId)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  }
+
+  async getAlgorithmicStrategy(id: string): Promise<AlgorithmicStrategy | null> {
+    return this.algorithmicStrategies.get(id) || null;
+  }
+
+  async updateAlgorithmicStrategy(id: string, updates: Partial<InsertAlgorithmicStrategy>): Promise<AlgorithmicStrategy> {
+    const strategy = this.algorithmicStrategies.get(id);
+    if (!strategy) {
+      throw new Error(`Algorithmic strategy with id ${id} not found`);
+    }
+
+    const updatedStrategy: AlgorithmicStrategy = {
+      ...strategy,
+      ...updates,
+      dailyLossLimit: updates.dailyLossLimit?.toString() || strategy.dailyLossLimit,
+      maxRiskPerTrade: updates.maxRiskPerTrade?.toString() || strategy.maxRiskPerTrade,
+      riskRewardMin: updates.riskRewardMin?.toString() || strategy.riskRewardMin,
+      dailyTarget: updates.dailyTarget?.toString() || strategy.dailyTarget,
+      weeklyBaseline: updates.weeklyBaseline?.toString() || strategy.weeklyBaseline,
+      weeklyStretch: updates.weeklyStretch?.toString() || strategy.weeklyStretch,
+      updatedAt: new Date()
+    };
+    this.algorithmicStrategies.set(id, updatedStrategy);
+    return updatedStrategy;
+  }
+
+  async deleteAlgorithmicStrategy(id: string): Promise<void> {
+    // Also delete associated stock picks
+    const picks = Array.from(this.strategyStockPicks.values())
+      .filter(pick => pick.strategyId === id);
+    picks.forEach(pick => this.strategyStockPicks.delete(pick.id));
+    
+    this.algorithmicStrategies.delete(id);
+  }
+
+  // Strategy Stock Picks Implementation
+  async createStrategyStockPick(insertPick: InsertStrategyStockPick): Promise<StrategyStockPick> {
+    const id = randomUUID();
+    const pick: StrategyStockPick = {
+      ...insertPick,
+      id,
+      scannerScore: insertPick.scannerScore?.toString() || null,
+      rvol: insertPick.rvol?.toString() || null,
+      price: insertPick.price.toString(),
+      rsi: insertPick.rsi?.toString() || null,
+      createdAt: new Date()
+    };
+    this.strategyStockPicks.set(id, pick);
+    return pick;
+  }
+
+  async getStrategyStockPicks(strategyId: string): Promise<StrategyStockPick[]> {
+    return Array.from(this.strategyStockPicks.values())
+      .filter(pick => pick.strategyId === strategyId)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  }
+
+  async getActiveStockPicks(userId: string): Promise<StrategyStockPick[]> {
+    const userStrategies = await this.getAlgorithmicStrategies(userId);
+    const strategyIds = userStrategies.map(s => s.id);
+    
+    return Array.from(this.strategyStockPicks.values())
+      .filter(pick => strategyIds.includes(pick.strategyId) && pick.status === 'active')
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  }
+
+  async updateStockPickStatus(id: string, status: string): Promise<void> {
+    const pick = this.strategyStockPicks.get(id);
+    if (pick) {
+      pick.status = status;
+      this.strategyStockPicks.set(id, pick);
+    }
   }
 }
 

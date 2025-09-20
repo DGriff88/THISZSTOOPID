@@ -1825,5 +1825,129 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Algorithmic Trading Strategies endpoints
+  app.get("/api/algorithmic-strategies", requireAuth, async (req: any, res) => {
+    try {
+      const strategies = await storage.getAlgorithmicStrategies(req.userId);
+      res.json(strategies);
+    } catch (error) {
+      console.error('Error fetching algorithmic strategies:', error);
+      res.status(500).json({ error: 'Failed to fetch algorithmic strategies' });
+    }
+  });
+
+  app.post("/api/algorithmic-strategies", requireAuth, async (req: any, res) => {
+    try {
+      const strategy = await storage.createAlgorithmicStrategy({
+        ...req.body,
+        userId: req.userId
+      });
+      res.json(strategy);
+    } catch (error) {
+      console.error('Error creating algorithmic strategy:', error);
+      res.status(500).json({ error: 'Failed to create algorithmic strategy' });
+    }
+  });
+
+  app.get("/api/algorithmic-strategies/:id", requireAuth, async (req: any, res) => {
+    try {
+      const strategy = await storage.getAlgorithmicStrategy(req.params.id);
+      if (!strategy) {
+        return res.status(404).json({ error: 'Strategy not found' });
+      }
+      res.json(strategy);
+    } catch (error) {
+      console.error('Error fetching algorithmic strategy:', error);
+      res.status(500).json({ error: 'Failed to fetch algorithmic strategy' });
+    }
+  });
+
+  app.put("/api/algorithmic-strategies/:id", requireAuth, async (req: any, res) => {
+    try {
+      const strategy = await storage.updateAlgorithmicStrategy(req.params.id, req.body);
+      res.json(strategy);
+    } catch (error) {
+      console.error('Error updating algorithmic strategy:', error);
+      res.status(500).json({ error: 'Failed to update algorithmic strategy' });
+    }
+  });
+
+  app.delete("/api/algorithmic-strategies/:id", requireAuth, async (req: any, res) => {
+    try {
+      await storage.deleteAlgorithmicStrategy(req.params.id);
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Error deleting algorithmic strategy:', error);
+      res.status(500).json({ error: 'Failed to delete algorithmic strategy' });
+    }
+  });
+
+  // Generate stock picks for a strategy
+  app.post("/api/algorithmic-strategies/:id/generate-picks", requireAuth, async (req: any, res) => {
+    try {
+      const strategy = await storage.getAlgorithmicStrategy(req.params.id);
+      if (!strategy) {
+        return res.status(404).json({ error: 'Strategy not found' });
+      }
+
+      console.log(`Generating picks for strategy: ${strategy.strategyName}`);
+      const TradingStrategiesEngine = (await import('./services/tradingStrategiesEngine.ts')).default;
+      const engine = new TradingStrategiesEngine(storage);
+      
+      const picks = await engine.generateStockPicks(strategy);
+      console.log(`Generated ${picks.length} stock picks`);
+      
+      // Save picks to storage
+      const savedPicks = [];
+      for (const pick of picks) {
+        console.log(`Saving pick for ${pick.symbol}`);
+        const savedPick = await storage.createStrategyStockPick(pick);
+        savedPicks.push(savedPick);
+      }
+
+      console.log(`Saved ${savedPicks.length} picks successfully`);
+      res.json(savedPicks);
+    } catch (error) {
+      console.error('Error generating stock picks:', error);
+      res.status(500).json({ error: 'Failed to generate stock picks' });
+    }
+  });
+
+  // Get stock picks for a strategy
+  app.get("/api/algorithmic-strategies/:id/picks", requireAuth, async (req: any, res) => {
+    try {
+      const picks = await storage.getStrategyStockPicks(req.params.id);
+      res.json(picks);
+    } catch (error) {
+      console.error('Error fetching stock picks:', error);
+      res.status(500).json({ error: 'Failed to fetch stock picks' });
+    }
+  });
+
+  // Get all active stock picks for user
+  app.get("/api/stock-picks/active", requireAuth, async (req: any, res) => {
+    try {
+      const picks = await storage.getActiveStockPicks(req.userId);
+      res.json(picks);
+    } catch (error) {
+      console.error('Error fetching active stock picks:', error);
+      res.status(500).json({ error: 'Failed to fetch active stock picks' });
+    }
+  });
+
+  // Create default ALGOTRADER BRAINBOX strategy
+  app.post("/api/algorithmic-strategies/create-default", requireAuth, async (req: any, res) => {
+    try {
+      const TradingStrategiesEngine = (await import('./services/tradingStrategiesEngine.ts')).default;
+      const engine = new TradingStrategiesEngine(storage);
+      
+      const strategy = await engine.createDefaultStrategy(req.userId);
+      res.json(strategy);
+    } catch (error) {
+      console.error('Error creating default strategy:', error);
+      res.status(500).json({ error: 'Failed to create default strategy' });
+    }
+  });
+
   return httpServer;
 }

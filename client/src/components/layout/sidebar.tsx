@@ -11,7 +11,8 @@ import {
   Activity, 
   Bot,
   Brain,
-  ShieldCheck
+  ShieldCheck,
+  Zap
 } from "lucide-react";
 
 const navigation = [
@@ -22,6 +23,7 @@ const navigation = [
   { name: "Trade History", href: "/trade-history", icon: History },
   { name: "Analytics", href: "/analytics", icon: BarChart3 },
   { name: "AI Insights", href: "/ai-insights", icon: Brain },
+  { name: "Trading Strategies", href: "/trading-strategies", icon: Zap },
   { name: "Strategic Analysis", href: "/strategic-analysis", icon: Target },
   { name: "Trading Compliance", href: "/trading-compliance", icon: ShieldCheck },
   { name: "Risk Management", href: "/risk-management", icon: Shield },
