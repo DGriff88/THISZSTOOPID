@@ -1838,13 +1838,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/algorithmic-strategies", requireAuth, async (req: any, res) => {
     try {
-      const strategy = await storage.createAlgorithmicStrategy({
+      const { insertAlgorithmicStrategySchema } = await import('@shared/schema');
+      const z = await import('zod');
+      const validatedData = insertAlgorithmicStrategySchema.parse({
         ...req.body,
         userId: req.userId
       });
+      const strategy = await storage.createAlgorithmicStrategy(validatedData);
       res.json(strategy);
     } catch (error) {
       console.error('Error creating algorithmic strategy:', error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid strategy data', details: error.errors });
+      }
       res.status(500).json({ error: 'Failed to create algorithmic strategy' });
     }
   });
@@ -1855,6 +1861,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!strategy) {
         return res.status(404).json({ error: 'Strategy not found' });
       }
+      // Verify ownership
+      if (strategy.userId !== req.userId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
       res.json(strategy);
     } catch (error) {
       console.error('Error fetching algorithmic strategy:', error);
@@ -1864,16 +1874,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put("/api/algorithmic-strategies/:id", requireAuth, async (req: any, res) => {
     try {
-      const strategy = await storage.updateAlgorithmicStrategy(req.params.id, req.body);
+      const { insertAlgorithmicStrategySchema } = await import('@shared/schema');
+      const z = await import('zod');
+      
+      // Verify ownership first
+      const existingStrategy = await storage.getAlgorithmicStrategy(req.params.id);
+      if (!existingStrategy) {
+        return res.status(404).json({ error: 'Strategy not found' });
+      }
+      if (existingStrategy.userId !== req.userId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+      
+      // Validate data without allowing userId mutation
+      const validatedData = insertAlgorithmicStrategySchema.omit({ 
+        userId: true, 
+        id: true, 
+        createdAt: true 
+      }).partial().parse(req.body);
+      
+      const strategy = await storage.updateAlgorithmicStrategy(req.params.id, validatedData);
       res.json(strategy);
     } catch (error) {
       console.error('Error updating algorithmic strategy:', error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid strategy data', details: error.errors });
+      }
       res.status(500).json({ error: 'Failed to update algorithmic strategy' });
     }
   });
 
   app.delete("/api/algorithmic-strategies/:id", requireAuth, async (req: any, res) => {
     try {
+      // Verify ownership first
+      const strategy = await storage.getAlgorithmicStrategy(req.params.id);
+      if (!strategy) {
+        return res.status(404).json({ error: 'Strategy not found' });
+      }
+      if (strategy.userId !== req.userId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+      
       await storage.deleteAlgorithmicStrategy(req.params.id);
       res.json({ success: true });
     } catch (error) {
@@ -1888,6 +1929,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const strategy = await storage.getAlgorithmicStrategy(req.params.id);
       if (!strategy) {
         return res.status(404).json({ error: 'Strategy not found' });
+      }
+      // Verify ownership
+      if (strategy.userId !== req.userId) {
+        return res.status(403).json({ error: 'Access denied' });
       }
 
       console.log(`Generating picks for strategy: ${strategy.strategyName}`);
@@ -1916,6 +1961,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get stock picks for a strategy
   app.get("/api/algorithmic-strategies/:id/picks", requireAuth, async (req: any, res) => {
     try {
+      // Verify strategy ownership first
+      const strategy = await storage.getAlgorithmicStrategy(req.params.id);
+      if (!strategy) {
+        return res.status(404).json({ error: 'Strategy not found' });
+      }
+      if (strategy.userId !== req.userId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+      
       const picks = await storage.getStrategyStockPicks(req.params.id);
       res.json(picks);
     } catch (error) {
