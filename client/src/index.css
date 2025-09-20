@@ -128,3 +128,13 @@
 .chart-container {
   background: linear-gradient(135deg, hsl(var(--background)) 0%, hsl(var(--muted)) 100%);
 }
+
+/* Ensure dialog content has solid background */
+[data-radix-popper-content-wrapper] {
+  z-index: 60;
+}
+
+.dialog-content-solid {
+  background-color: hsl(var(--background)) !important;
+  backdrop-filter: none !important;
+}
