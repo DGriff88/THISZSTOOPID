@@ -12,6 +12,7 @@ import TradeHistory from "@/pages/trade-history";
 import Analytics from "@/pages/analytics";
 import RiskManagement from "@/pages/risk-management";
 import Settings from "@/pages/settings";
+import AIInsights from "@/pages/AIInsights";
 import Sidebar from "@/components/layout/sidebar";
 
 function Router() {
@@ -26,6 +27,7 @@ function Router() {
           <Route path="/paper-trading" component={PaperTrading} />
           <Route path="/trade-history" component={TradeHistory} />
           <Route path="/analytics" component={Analytics} />
+          <Route path="/ai-insights" component={AIInsights} />
           <Route path="/risk-management" component={RiskManagement} />
           <Route path="/settings" component={Settings} />
           <Route component={NotFound} />

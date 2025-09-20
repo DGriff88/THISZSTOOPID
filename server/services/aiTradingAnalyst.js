@@ -1,5 +1,32 @@
 import OpenAI from "openai";
 
+// TypeScript interfaces for better type safety
+interface MarketSentiment {
+  symbol: string;
+  currentPrice: number;
+  dayChange: number;
+  sentiment: string;
+  confidence: number;
+  insights: string[];
+  recommendation: string;
+  riskLevel: string;
+  timestamp: string;
+}
+
+interface TradeRecommendation {
+  symbol: string;
+  action: string;
+  positionSize: number;
+  entryPrice: number;
+  stopLoss?: number;
+  targetPrice?: number;
+  reasoning: string;
+  riskRating: string;
+  timeframe: string;
+  confidence: number;
+  timestamp: string;
+}
+
 // the newest OpenAI model is "gpt-5" which was released August 7, 2025. do not change this unless explicitly requested by the user
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
