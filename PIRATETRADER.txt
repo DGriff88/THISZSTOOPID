@@ -1,0 +1,117 @@
+PIRATETRADER - OPTIONS PAYCHECK MODE
+==========================================
+
+RULE ONE: No new spread can be opened to "cover" a leg. If a stray leg exists, it must be closed first. No compounding. CANCEL ALL GTC NIGHTLY!!!
+
+Your "shift" is to scan, stalk, and execute a handful of good trades that pay the bills.
+
+At the end of the week, you close the shop, log the paycheck, and reset for Monday.
+
+
+KEY DISCIPLINE
+==============
+
+One spread at a time per ticker.
+No stray legs.
+Cancel GTC nightly.
+Walk rule: +$200/day OR 3 reds = stop.
+Think weekly: "These 3–5 trades are my job this week."
+
+
+TRADE TYPES FOR WEEKLY CYCLE
+============================
+
+1. Momentum Pop Spread (call/put debit spread on breakout + retest)
+   - RVOL ≥ 1.5 and rising
+   - Fresh catalyst ≤4h old
+   - Debit ≤ $80
+
+2. EMA Pullback Spread (ride the slope, capture 1–2R)
+   - 50 EMA slope aligned with trade direction
+   - Entry on pullback to VWAP/21EMA
+   - RSI/Stoch/MACD confirm momentum
+
+3. Oversold Bounce (yesterday setup)
+   - Daily RSI(5) < 32 or BB tap
+   - First green candle + volume, RSI >30
+   - Options: short put spread (bullish) or call spread
+
+4. Occasional credit spread on strong levels for income
+   - Only on high-conviction setups
+   - OI ≥ 1,000; bid/ask ≤ $0.20
+
+Each trade = $40–80 risk, aiming $100–200 reward. Two winners in a week = paycheck met.
+
+
+WEEKLY PAYCHECK FRAMEWORK
+=========================
+
+Goal:
+$300–$500/week baseline (on $2.3k account).
+Stretch goal: $750–$1,000/week when setups align.
+Paycheck = sum of 2–5 defined-risk trades, not daily flipping.
+
+Monday–Tuesday: Setup & Entry
+-----------------------------
+Run scanner → tag 2–3 A+ setups (fresh catalyst, RVOL ≥1.5, ≤$80 debit).
+Place 1–2 spreads max.
+Idea: open one short-term debit spread (3–7 DTE) and maybe one swing spread if catalyst strong.
+
+Wednesday–Thursday: Manage & Add
+-------------------------------
+If winners are running, scale partials / lock some profit.
+If flat or red but still valid (VWAP/EMA holding), let them ride.
+Maybe 1 more fresh entry if catalyst is A+.
+
+Friday: Cash Out & Reset
+-----------------------
+Close all weeklies → collect paycheck.
+Do not carry multiple weeklies into weekend.
+Only exception: LEAP / swing with months left (like NVDA).
+
+
+WORK WINDOWS & LIMITS
+====================
+
+Trading windows:
+- 06:30–07:30 PT (First Hour) - MAIN SHOT
+- 12:00–13:00 PT (Last Hour) - SECONDARY SHOT
+
+Max 2 trades per window
+Per-trade risk: $40–$80 (spread debit)
+Daily max loss: −$240
+Walk Rule: stop after +$200/day or 3 consecutive losses
+
+
+RISK RULES
+==========
+
+Risk per spread ≤ $80
+R:R ≥ 1:1, prefer ≥ 1:2
+Stop at +$200/day or 3 reds
+No naked calls/puts
+Only debit/credit spreads allowed
+OI ≥ 1,000; bid/ask ≤ $0.20
+Max 1 weekly spread kept open beyond day session
+
+
+DISCIPLINE RULES
+===============
+
+No stale catalysts (>4h)
+No chasing AH pops >10% unless confirmed pullback
+Respect VWAP/EMA clusters
+Never scalp from IRA
+Never sell CWH
+NVDA/OMAH remain backup funds
+SOFI floor $20+
+
+
+SCANNER REQUIREMENTS
+===================
+
+Universe: Price $10–$150, Market cap ≥ $1B, Volume ≥ 2M shares
+Always include: SOFI, NVDA, OMAH (backup funds/keepers)
+Freshness: Catalyst ≤ 4h old (PR, FDA, SEC filing, guidance, earnings, UOA)
+RVOL ≥ 1.5 and rising
+Not extended: last_price ≤ first_candle_high OR pullback to VWAP/21EMA
