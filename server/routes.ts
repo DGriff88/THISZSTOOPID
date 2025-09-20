@@ -121,14 +121,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     next();
   };
 
-  // AI Trading Analysis endpoints
-  app.get("/api/ai/sentiment/:symbol", requireBrokerAuth, async (req: any, res) => {
+  // AI Trading Analysis endpoints - require user auth first
+  app.get("/api/ai/sentiment/:symbol", requireAuth, requireBrokerAuth, async (req: any, res) => {
     try {
       const { service } = req.broker;
       const { symbol } = req.params;
       
       // Import AI analyst dynamically to avoid circular dependencies
-      const { default: AITradingAnalyst } = await import('./services/aiTradingAnalyst.js');
+      const { default: AITradingAnalyst } = await import('./services/aiTradingAnalyst.ts');
       const analyst = new AITradingAnalyst(service);
       
       const sentiment = await analyst.analyzeMarketSentiment(symbol.toUpperCase());
@@ -139,13 +139,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/ai/recommendation/:symbol", requireBrokerAuth, async (req: any, res) => {
+  app.get("/api/ai/recommendation/:symbol", requireAuth, requireBrokerAuth, async (req: any, res) => {
     try {
       const { service } = req.broker;
       const { symbol } = req.params;
       const { portfolioValue, riskTolerance } = req.query;
       
-      const { default: AITradingAnalyst } = await import('./services/aiTradingAnalyst.js');
+      const { default: AITradingAnalyst } = await import('./services/aiTradingAnalyst.ts');
       const analyst = new AITradingAnalyst(service);
       
       const recommendation = await analyst.getTradeRecommendation(
@@ -160,7 +160,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/ai/portfolio-analysis", requireBrokerAuth, async (req: any, res) => {
+  app.post("/api/ai/portfolio-analysis", requireAuth, requireBrokerAuth, async (req: any, res) => {
     try {
       const { service } = req.broker;
       const { symbols, portfolioValue } = req.body;
@@ -169,7 +169,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: 'Symbols array is required' });
       }
       
-      const { default: AITradingAnalyst } = await import('./services/aiTradingAnalyst.js');
+      const { default: AITradingAnalyst } = await import('./services/aiTradingAnalyst.ts');
       const analyst = new AITradingAnalyst(service);
       
       const analysis = await analyst.analyzePortfolio(
@@ -183,11 +183,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/ai/market-conditions", requireBrokerAuth, async (req: any, res) => {
+  app.get("/api/ai/market-conditions", requireAuth, requireBrokerAuth, async (req: any, res) => {
     try {
       const { service } = req.broker;
       
-      const { default: AITradingAnalyst } = await import('./services/aiTradingAnalyst.js');
+      const { default: AITradingAnalyst } = await import('./services/aiTradingAnalyst.ts');
       const analyst = new AITradingAnalyst(service);
       
       const conditions = await analyst.getMarketConditions();

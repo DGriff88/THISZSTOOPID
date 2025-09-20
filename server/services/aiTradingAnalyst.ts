@@ -75,7 +75,22 @@ class AITradingAnalyst {
         response_format: { type: "json_object" }
       });
 
-      const analysis = JSON.parse(response.choices[0].message.content);
+      // Safely parse AI response  
+      let analysis;
+      try {
+        const content = response.choices[0]?.message?.content;
+        if (!content) throw new Error("Empty AI response");
+        analysis = JSON.parse(content);
+      } catch (parseError) {
+        console.error("Failed to parse AI sentiment:", parseError);
+        analysis = {
+          sentiment: "neutral",
+          confidence: 0.5,
+          insights: ["Analysis unavailable due to parsing error"],
+          recommendation: "hold",
+          riskLevel: "medium"
+        };
+      }
       
       return {
         symbol,
@@ -123,7 +138,7 @@ class AITradingAnalyst {
           - Risk Level: ${sentiment.riskLevel}
           
           Portfolio Info:
-          - Available Buying Power: $${buyingPower}
+          - ${buyingPowerContext}
           - Risk Tolerance: ${riskTolerance}
           
           Provide specific trade recommendation with position size, stop loss, and target price.`
@@ -131,7 +146,20 @@ class AITradingAnalyst {
         response_format: { type: "json_object" }
       });
 
-      const recommendation = JSON.parse(response.choices[0].message.content);
+      // Safely parse AI response with error handling
+      let recommendation;
+      try {
+        const content = response.choices[0]?.message?.content;
+        if (!content) throw new Error("Empty AI response");
+        recommendation = JSON.parse(content);
+      } catch (parseError) {
+        console.error("Failed to parse AI recommendation:", parseError);
+        recommendation = {
+          action: "hold",
+          reasoning: "Unable to generate recommendation due to parsing error",
+          riskRating: "high"
+        };
+      }
       
       return {
         symbol,
@@ -187,7 +215,22 @@ class AITradingAnalyst {
         response_format: { type: "json_object" }
       });
 
-      const optimization = JSON.parse(response.choices[0].message.content);
+      // Safely parse AI response
+      let optimization;
+      try {
+        const content = response.choices[0]?.message?.content;
+        if (!content) throw new Error("Empty AI response");
+        optimization = JSON.parse(content);
+      } catch (parseError) {
+        console.error("Failed to parse AI portfolio optimization:", parseError);
+        optimization = {
+          overallSentiment: "neutral",
+          riskLevel: "medium",
+          suggestions: ["Portfolio analysis unavailable due to parsing error"],
+          allocations: {},
+          diversificationScore: 0.5
+        };
+      }
       
       return {
         portfolioValue,
@@ -246,7 +289,22 @@ class AITradingAnalyst {
         response_format: { type: "json_object" }
       });
 
-      const conditions = JSON.parse(response.choices[0].message.content);
+      // Safely parse AI response
+      let conditions;
+      try {
+        const content = response.choices[0]?.message?.content;
+        if (!content) throw new Error("Empty AI response");
+        conditions = JSON.parse(content);
+      } catch (parseError) {
+        console.error("Failed to parse AI market conditions:", parseError);
+        conditions = {
+          trend: "sideways",
+          volatility: "medium", 
+          sentiment: "neutral",
+          tradingStrategy: "cautious",
+          risks: ["Market analysis unavailable due to parsing error"]
+        };
+      }
       
       return {
         marketData: marketData.filter(d => !d.error),
