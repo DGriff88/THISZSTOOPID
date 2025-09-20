@@ -121,6 +121,83 @@ export async function registerRoutes(app: Express): Promise<Server> {
     next();
   };
 
+  // AI Trading Analysis endpoints
+  app.get("/api/ai/sentiment/:symbol", requireBrokerAuth, async (req: any, res) => {
+    try {
+      const { service } = req.broker;
+      const { symbol } = req.params;
+      
+      // Import AI analyst dynamically to avoid circular dependencies
+      const { default: AITradingAnalyst } = await import('./services/aiTradingAnalyst.js');
+      const analyst = new AITradingAnalyst(service);
+      
+      const sentiment = await analyst.analyzeMarketSentiment(symbol.toUpperCase());
+      res.json(sentiment);
+    } catch (error) {
+      console.error('Error getting AI sentiment:', error);
+      res.status(500).json({ error: 'Failed to analyze market sentiment' });
+    }
+  });
+
+  app.get("/api/ai/recommendation/:symbol", requireBrokerAuth, async (req: any, res) => {
+    try {
+      const { service } = req.broker;
+      const { symbol } = req.params;
+      const { portfolioValue, riskTolerance } = req.query;
+      
+      const { default: AITradingAnalyst } = await import('./services/aiTradingAnalyst.js');
+      const analyst = new AITradingAnalyst(service);
+      
+      const recommendation = await analyst.getTradeRecommendation(
+        symbol.toUpperCase(), 
+        parseFloat(portfolioValue as string) || 100000,
+        riskTolerance as string || "medium"
+      );
+      res.json(recommendation);
+    } catch (error) {
+      console.error('Error getting AI recommendation:', error);
+      res.status(500).json({ error: 'Failed to get trade recommendation' });
+    }
+  });
+
+  app.post("/api/ai/portfolio-analysis", requireBrokerAuth, async (req: any, res) => {
+    try {
+      const { service } = req.broker;
+      const { symbols, portfolioValue } = req.body;
+      
+      if (!symbols || !Array.isArray(symbols)) {
+        return res.status(400).json({ error: 'Symbols array is required' });
+      }
+      
+      const { default: AITradingAnalyst } = await import('./services/aiTradingAnalyst.js');
+      const analyst = new AITradingAnalyst(service);
+      
+      const analysis = await analyst.analyzePortfolio(
+        symbols.map((s: string) => s.toUpperCase()), 
+        portfolioValue || 100000
+      );
+      res.json(analysis);
+    } catch (error) {
+      console.error('Error analyzing portfolio:', error);
+      res.status(500).json({ error: 'Failed to analyze portfolio' });
+    }
+  });
+
+  app.get("/api/ai/market-conditions", requireBrokerAuth, async (req: any, res) => {
+    try {
+      const { service } = req.broker;
+      
+      const { default: AITradingAnalyst } = await import('./services/aiTradingAnalyst.js');
+      const analyst = new AITradingAnalyst(service);
+      
+      const conditions = await analyst.getMarketConditions();
+      res.json(conditions);
+    } catch (error) {
+      console.error('Error getting market conditions:', error);
+      res.status(500).json({ error: 'Failed to get market conditions' });
+    }
+  });
+
   // Portfolio endpoints
   app.get("/api/portfolio/summary", requireAuth, async (req: any, res) => {
     try {

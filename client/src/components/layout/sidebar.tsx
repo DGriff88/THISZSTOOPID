@@ -9,7 +9,8 @@ import {
   History, 
   FileText, 
   Activity, 
-  Bot 
+  Bot,
+  Brain
 } from "lucide-react";
 
 const navigation = [
@@ -19,6 +20,7 @@ const navigation = [
   { name: "Paper Trading", href: "/paper-trading", icon: FileText },
   { name: "Trade History", href: "/trade-history", icon: History },
   { name: "Analytics", href: "/analytics", icon: BarChart3 },
+  { name: "AI Insights", href: "/ai-insights", icon: Brain },
   { name: "Risk Management", href: "/risk-management", icon: Shield },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
