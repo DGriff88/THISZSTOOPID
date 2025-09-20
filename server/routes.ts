@@ -1767,5 +1767,63 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Strategic Portfolio Analysis endpoints
+  app.post("/api/strategic-analysis/generate", requireAuth, async (req: any, res) => {
+    try {
+      const broker = getBrokerService();
+      const schwabService = broker?.type === 'schwab' ? broker.service : null;
+      
+      const strategicEngine = new (await import('./services/strategicAnalysisEngine.ts')).default(storage, schwabService);
+      
+      const analysis = await strategicEngine.generateWeeklyAnalysis(req.userId);
+      res.json(analysis);
+    } catch (error) {
+      console.error('Error generating strategic analysis:', error);
+      res.status(500).json({ error: 'Failed to generate strategic analysis' });
+    }
+  });
+
+  app.get("/api/strategic-analysis/latest", requireAuth, async (req: any, res) => {
+    try {
+      const analysis = await storage.getLatestStrategicAnalysis(req.userId);
+      res.json(analysis);
+    } catch (error) {
+      console.error('Error getting latest strategic analysis:', error);
+      res.status(500).json({ error: 'Failed to get strategic analysis' });
+    }
+  });
+
+  app.get("/api/strategic-analysis/history", requireAuth, async (req: any, res) => {
+    try {
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : 10;
+      const analyses = await storage.getStrategicAnalyses(req.userId, limit);
+      res.json(analyses);
+    } catch (error) {
+      console.error('Error getting strategic analysis history:', error);
+      res.status(500).json({ error: 'Failed to get strategic analysis history' });
+    }
+  });
+
+  app.get("/api/portfolio/holdings", requireAuth, async (req: any, res) => {
+    try {
+      const holdings = await storage.getPortfolioHoldings(req.userId);
+      res.json(holdings);
+    } catch (error) {
+      console.error('Error getting portfolio holdings:', error);
+      res.status(500).json({ error: 'Failed to get portfolio holdings' });
+    }
+  });
+
+  app.get("/api/economic-events", requireAuth, async (req: any, res) => {
+    try {
+      const daysAhead = req.query.days ? parseInt(req.query.days as string) : 7;
+      const events = await storage.getUpcomingEconomicEvents(daysAhead);
+      res.json(events);
+    } catch (error) {
+      console.error('Error getting economic events:', error);
+      res.status(500).json({ error: 'Failed to get economic events' });
+    }
+  });
+
   return httpServer;
 }

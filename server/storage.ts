@@ -32,7 +32,13 @@ import {
   type WeeklyPaycheck,
   type InsertWeeklyPaycheck,
   type RuleViolation,
-  type InsertRuleViolation
+  type InsertRuleViolation,
+  type StrategicAnalysis,
+  type InsertStrategicAnalysis,
+  type PortfolioHolding,
+  type InsertPortfolioHolding,
+  type EconomicEvent,
+  type InsertEconomicEvent
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -146,6 +152,10 @@ export class MemStorage implements IStorage {
   private dailySessions: Map<string, DailySession>;
   private weeklyPaychecks: Map<string, WeeklyPaycheck>;
   private ruleViolations: Map<string, RuleViolation>;
+  // Strategic Analysis storage
+  private strategicAnalyses: Map<string, StrategicAnalysis>;
+  private portfolioHoldings: Map<string, PortfolioHolding>;
+  private economicEvents: Map<string, EconomicEvent>;
 
   constructor() {
     this.users = new Map();
@@ -162,6 +172,10 @@ export class MemStorage implements IStorage {
     this.dailySessions = new Map();
     this.weeklyPaychecks = new Map();
     this.ruleViolations = new Map();
+    // Strategic Analysis storage
+    this.strategicAnalyses = new Map();
+    this.portfolioHoldings = new Map();
+    this.economicEvents = new Map();
 
     // Initialize with a demo user
     this.initializeDemoData();
@@ -984,6 +998,128 @@ export class MemStorage implements IStorage {
     const updatedViolation = { ...violation, userAcknowledged: true };
     this.ruleViolations.set(id, updatedViolation);
     return updatedViolation;
+  }
+
+  // Strategic Analysis methods
+  async createStrategicAnalysis(insertAnalysis: InsertStrategicAnalysis): Promise<StrategicAnalysis> {
+    const id = randomUUID();
+    const analysis: StrategicAnalysis = {
+      ...insertAnalysis,
+      id,
+      createdAt: new Date(),
+      fedPolicyExpectation: insertAnalysis.fedPolicyExpectation || null,
+      volatilityExpectation: insertAnalysis.volatilityExpectation || null,
+      aiAnalysis: insertAnalysis.aiAnalysis || null,
+      keyEvents: insertAnalysis.keyEvents || null,
+      recommendations: insertAnalysis.recommendations || null,
+      portfolioRisk: insertAnalysis.portfolioRisk || null,
+      correlation: insertAnalysis.correlation?.toString() || null,
+      confidence: insertAnalysis.confidence || null
+    };
+    this.strategicAnalyses.set(id, analysis);
+    return analysis;
+  }
+
+  async getLatestStrategicAnalysis(userId: string): Promise<StrategicAnalysis | undefined> {
+    const userAnalyses = Array.from(this.strategicAnalyses.values())
+      .filter(analysis => analysis.userId === userId)
+      .sort((a, b) => b.analysisDate.getTime() - a.analysisDate.getTime());
+    
+    return userAnalyses[0];
+  }
+
+  async getStrategicAnalyses(userId: string, limit: number = 10): Promise<StrategicAnalysis[]> {
+    return Array.from(this.strategicAnalyses.values())
+      .filter(analysis => analysis.userId === userId)
+      .sort((a, b) => b.analysisDate.getTime() - a.analysisDate.getTime())
+      .slice(0, limit);
+  }
+
+  async getPortfolioHoldings(userId: string): Promise<PortfolioHolding[]> {
+    return Array.from(this.portfolioHoldings.values())
+      .filter(holding => holding.userId === userId && holding.isActive);
+  }
+
+  async upsertPortfolioHolding(insertHolding: InsertPortfolioHolding): Promise<PortfolioHolding> {
+    // Check if holding already exists for this user and symbol
+    const existingHolding = Array.from(this.portfolioHoldings.values())
+      .find(h => h.userId === insertHolding.userId && h.symbol === insertHolding.symbol);
+
+    if (existingHolding) {
+      // Update existing holding
+      const updatedHolding: PortfolioHolding = {
+        ...existingHolding,
+        ...insertHolding,
+        lastUpdated: new Date()
+      };
+      this.portfolioHoldings.set(existingHolding.id, updatedHolding);
+      return updatedHolding;
+    } else {
+      // Create new holding
+      const id = randomUUID();
+      const holding: PortfolioHolding = {
+        ...insertHolding,
+        id,
+        currentPrice: insertHolding.currentPrice?.toString() || null,
+        marketValue: insertHolding.marketValue?.toString() || null,
+        unrealizedPnl: insertHolding.unrealizedPnl?.toString() || null,
+        averageCost: insertHolding.averageCost.toString(),
+        beta: insertHolding.beta?.toString() || null,
+        sector: insertHolding.sector || null,
+        marketCap: insertHolding.marketCap || null,
+        riskRating: insertHolding.riskRating || null,
+        catalysts: insertHolding.catalysts || null,
+        technicalLevel: insertHolding.technicalLevel || null,
+        isActive: insertHolding.isActive ?? true,
+        lastUpdated: new Date(),
+        createdAt: new Date()
+      };
+      this.portfolioHoldings.set(id, holding);
+      return holding;
+    }
+  }
+
+  async updatePortfolioHolding(id: string, updates: Partial<PortfolioHolding>): Promise<PortfolioHolding | undefined> {
+    const holding = this.portfolioHoldings.get(id);
+    if (!holding) return undefined;
+    
+    const updatedHolding = { ...holding, ...updates, lastUpdated: new Date() };
+    this.portfolioHoldings.set(id, updatedHolding);
+    return updatedHolding;
+  }
+
+  async createEconomicEvent(insertEvent: InsertEconomicEvent): Promise<EconomicEvent> {
+    const id = randomUUID();
+    const event: EconomicEvent = {
+      ...insertEvent,
+      id,
+      impact: insertEvent.impact || null,
+      details: insertEvent.details || null,
+      actualValue: insertEvent.actualValue || null,
+      expectedValue: insertEvent.expectedValue || null,
+      previousValue: insertEvent.previousValue || null,
+      marketImpact: insertEvent.marketImpact || null,
+      sectorImpact: insertEvent.sectorImpact || null,
+      isResolved: insertEvent.isResolved ?? false,
+      createdAt: new Date()
+    };
+    this.economicEvents.set(id, event);
+    return event;
+  }
+
+  async getUpcomingEconomicEvents(daysAhead: number = 7): Promise<EconomicEvent[]> {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() + daysAhead);
+    
+    return Array.from(this.economicEvents.values())
+      .filter(event => event.eventDate <= cutoffDate && event.eventDate >= new Date())
+      .sort((a, b) => a.eventDate.getTime() - b.eventDate.getTime());
+  }
+
+  async getEconomicEventsByCategory(category: string): Promise<EconomicEvent[]> {
+    return Array.from(this.economicEvents.values())
+      .filter(event => event.category === category)
+      .sort((a, b) => a.eventDate.getTime() - b.eventDate.getTime());
   }
 }
 
