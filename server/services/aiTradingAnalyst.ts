@@ -118,8 +118,28 @@ class AITradingAnalyst {
       const sentiment = await this.analyzeMarketSentiment(symbol);
       if (sentiment.error) return sentiment;
 
-      const account = await this.schwabService.getAccount();
-      const buyingPower = account.securitiesAccount.currentBalances.buyingPower;
+      // Anonymize buying power - create budget tier instead of exact amounts
+      let buyingPowerContext;
+      try {
+        const account = await this.schwabService.getAccount();
+        const rawBuyingPower = account.securitiesAccount.currentBalances.buyingPower;
+        
+        // Create anonymized budget tiers for AI analysis
+        if (rawBuyingPower > 1000000) {
+          buyingPowerContext = "Budget tier: >$1M";
+        } else if (rawBuyingPower > 250000) {
+          buyingPowerContext = "Budget tier: $250k-$1M";
+        } else if (rawBuyingPower > 50000) {
+          buyingPowerContext = "Budget tier: $50k-$250k";
+        } else if (rawBuyingPower > 10000) {
+          buyingPowerContext = "Budget tier: $10k-$50k";
+        } else {
+          buyingPowerContext = "Budget tier: <$10k";
+        }
+      } catch (error) {
+        console.error("Failed to get account info:", error);
+        buyingPowerContext = "Budget tier: unknown";
+      }
 
       const response = await client.chat.completions.create({
         model: "gpt-5",
