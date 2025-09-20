@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, decimal, timestamp, boolean, jsonb, integer, index, unique } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, decimal, timestamp, boolean, jsonb, integer, index, unique, real } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -20,6 +20,7 @@ export const STRATEGY_TYPES = [
   'trap_bullish',
   'reversal_candlestick',
   'common_trading_patterns',
+  'strategic_portfolio_analysis',
   'custom'
 ] as const;
 export const PATTERN_TYPES = [
@@ -327,6 +328,91 @@ export const ruleViolations = pgTable("rule_violations", {
   detectedAtIdx: index("rule_violations_detected_at_idx").on(table.detectedAt),
 }));
 
+// Strategic Portfolio Analysis tables
+export const strategicAnalyses = pgTable("strategic_analyses", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  analysisDate: timestamp("analysis_date").notNull(),
+  
+  // Market outlook
+  marketOutlook: text("market_outlook").notNull(), // 'bullish', 'bearish', 'neutral'
+  riskLevel: text("risk_level").notNull(), // 'low', 'medium', 'high'
+  fedPolicyExpectation: text("fed_policy_expectation"), // 'dovish', 'hawkish', 'neutral'
+  volatilityExpectation: text("volatility_expectation"), // 'low', 'medium', 'high'
+  
+  // AI analysis
+  aiAnalysis: text("ai_analysis"), // AI-generated market commentary
+  keyEvents: jsonb("key_events"), // Array of upcoming macro events
+  recommendations: jsonb("recommendations"), // Array of strategy recommendations
+  
+  // Risk assessment
+  portfolioRisk: text("portfolio_risk"), // Overall portfolio risk level
+  correlation: decimal("correlation", { precision: 5, scale: 2 }), // Portfolio correlation score
+  confidence: real("confidence"), // 0-1 confidence in analysis
+  
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => ({
+  userIdDateIdx: index("strategic_analyses_user_date_idx").on(table.userId, table.analysisDate),
+  analysisDateIdx: index("strategic_analyses_date_idx").on(table.analysisDate),
+}));
+
+export const portfolioHoldings = pgTable("portfolio_holdings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  symbol: text("symbol").notNull(),
+  
+  // Position details
+  shares: integer("shares").notNull(),
+  averageCost: decimal("average_cost", { precision: 12, scale: 4 }).notNull(),
+  currentPrice: decimal("current_price", { precision: 12, scale: 4 }),
+  marketValue: decimal("market_value", { precision: 12, scale: 2 }),
+  unrealizedPnl: decimal("unrealized_pnl", { precision: 12, scale: 2 }),
+  
+  // Risk categorization
+  sector: text("sector"),
+  marketCap: text("market_cap"), // 'small', 'mid', 'large', 'mega'
+  beta: decimal("beta", { precision: 5, scale: 2 }),
+  riskRating: text("risk_rating"), // 'conservative', 'moderate', 'aggressive'
+  
+  // Strategic analysis
+  catalysts: jsonb("catalysts"), // Upcoming earnings, events
+  technicalLevel: text("technical_level"), // 'support', 'resistance', 'neutral'
+  
+  isActive: boolean("is_active").notNull().default(true),
+  lastUpdated: timestamp("last_updated").notNull().defaultNow(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => ({
+  userIdSymbolIdx: index("portfolio_holdings_user_symbol_idx").on(table.userId, table.symbol),
+  userIdActiveIdx: index("portfolio_holdings_user_active_idx").on(table.userId, table.isActive),
+}));
+
+export const economicEvents = pgTable("economic_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  eventName: text("event_name").notNull(),
+  eventDate: timestamp("event_date").notNull(),
+  
+  // Event classification
+  importance: text("importance").notNull(), // 'low', 'medium', 'high'
+  category: text("category").notNull(), // 'fomc', 'earnings', 'economic_data', 'political'
+  impact: text("impact"), // 'bullish', 'bearish', 'neutral'
+  
+  // Event data
+  details: text("details"),
+  actualValue: text("actual_value"),
+  expectedValue: text("expected_value"),
+  previousValue: text("previous_value"),
+  
+  // Market impact assessment
+  marketImpact: text("market_impact"), // Expected market reaction
+  sectorImpact: jsonb("sector_impact"), // Sector-specific impacts
+  
+  isResolved: boolean("is_resolved").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => ({
+  eventDateIdx: index("economic_events_date_idx").on(table.eventDate),
+  categoryImportanceIdx: index("economic_events_category_importance_idx").on(table.category, table.importance),
+}));
+
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users).pick({
   username: true,
@@ -467,6 +553,41 @@ export const insertRuleViolationSchema = createInsertSchema(ruleViolations).omit
   severity: z.enum(['warning', 'error', 'critical']).default('warning'),
 });
 
+// Strategic Analysis insert schemas
+export const insertStrategicAnalysisSchema = createInsertSchema(strategicAnalyses, {
+  analysisDate: z.date(),
+  keyEvents: z.array(z.any()).optional(),
+  recommendations: z.array(z.any()).optional(),
+}).omit({
+  id: true,
+  createdAt: true,
+}).extend({
+  marketOutlook: z.enum(['bullish', 'bearish', 'neutral']),
+  riskLevel: z.enum(['low', 'medium', 'high']),
+  fedPolicyExpectation: z.enum(['dovish', 'hawkish', 'neutral']).optional(),
+  volatilityExpectation: z.enum(['low', 'medium', 'high']).optional(),
+  portfolioRisk: z.enum(['low', 'medium', 'high']).optional(),
+});
+
+export const insertPortfolioHoldingSchema = createInsertSchema(portfolioHoldings).omit({
+  id: true,
+  createdAt: true,
+  lastUpdated: true,
+}).extend({
+  marketCap: z.enum(['small', 'mid', 'large', 'mega']).optional(),
+  riskRating: z.enum(['conservative', 'moderate', 'aggressive']).optional(),
+  technicalLevel: z.enum(['support', 'resistance', 'neutral']).optional(),
+});
+
+export const insertEconomicEventSchema = createInsertSchema(economicEvents).omit({
+  id: true,
+  createdAt: true,
+}).extend({
+  importance: z.enum(['low', 'medium', 'high']),
+  category: z.enum(['fomc', 'earnings', 'economic_data', 'political']),
+  impact: z.enum(['bullish', 'bearish', 'neutral']).optional(),
+});
+
 // Types
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
@@ -501,6 +622,16 @@ export type WeeklyPaycheck = typeof weeklyPaychecks.$inferSelect;
 
 export type InsertRuleViolation = z.infer<typeof insertRuleViolationSchema>;
 export type RuleViolation = typeof ruleViolations.$inferSelect;
+
+// Strategic Analysis types
+export type InsertStrategicAnalysis = z.infer<typeof insertStrategicAnalysisSchema>;
+export type StrategicAnalysis = typeof strategicAnalyses.$inferSelect;
+
+export type InsertPortfolioHolding = z.infer<typeof insertPortfolioHoldingSchema>;
+export type PortfolioHolding = typeof portfolioHoldings.$inferSelect;
+
+export type InsertEconomicEvent = z.infer<typeof insertEconomicEventSchema>;
+export type EconomicEvent = typeof economicEvents.$inferSelect;
 
 // API Response types
 export interface PortfolioSummary {
