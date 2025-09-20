@@ -24,7 +24,15 @@ import {
   type InsertPatternOutcome,
   type PatternBacktestRequest,
   type PatternBacktestResult,
-  type PatternPerformanceMetrics
+  type PatternPerformanceMetrics,
+  type OptionTrade,
+  type InsertOptionTrade,
+  type DailySession,
+  type InsertDailySession,
+  type WeeklyPaycheck,
+  type InsertWeeklyPaycheck,
+  type RuleViolation,
+  type InsertRuleViolation
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -98,6 +106,29 @@ export interface IStorage {
   getPatternConfigsByUser(userId: string): Promise<PatternConfig[]>;
   createMultiplePatternSignals(signals: InsertPatternSignal[]): Promise<PatternSignal[]>;
   getPatternSignalsInTimeRange(startDate: Date, endDate: Date, strategyId?: string, patternTypes?: string[]): Promise<PatternSignal[]>;
+
+  // PIRATETRADER methods
+  // Option trades
+  createOptionTrade(trade: InsertOptionTrade): Promise<OptionTrade>;
+  getOptionTrades(userId: string, limit?: number): Promise<OptionTrade[]>;
+  getActiveOptionTrades(userId: string, symbol?: string): Promise<OptionTrade[]>;
+  updateOptionTrade(id: string, updates: Partial<OptionTrade>): Promise<OptionTrade | undefined>;
+  
+  // Daily sessions for compliance tracking
+  createDailySession(session: InsertDailySession): Promise<DailySession>;
+  getDailySession(userId: string, date: string): Promise<DailySession | undefined>;
+  updateDailySession(id: string, updates: Partial<DailySession>): Promise<DailySession | undefined>;
+  
+  // Weekly paycheck tracking
+  createWeeklyPaycheck(paycheck: InsertWeeklyPaycheck): Promise<WeeklyPaycheck>;
+  getWeeklyPaycheck(userId: string, weekStart: Date): Promise<WeeklyPaycheck | undefined>;
+  updateWeeklyPaycheck(id: string, updates: Partial<WeeklyPaycheck>): Promise<WeeklyPaycheck | undefined>;
+  
+  // Rule violations
+  createRuleViolation(violation: InsertRuleViolation): Promise<RuleViolation>;
+  getRuleViolations(userId: string, limit?: number): Promise<RuleViolation[]>;
+  getActiveViolations(userId: string): Promise<RuleViolation[]>;
+  acknowledgeViolation(id: string): Promise<RuleViolation | undefined>;
 }
 
 export class MemStorage implements IStorage {
@@ -110,6 +141,11 @@ export class MemStorage implements IStorage {
   private patternSignals: Map<string, PatternSignal>;
   private patternConfigs: Map<string, PatternConfig>;
   private patternOutcomes: Map<string, PatternOutcome>;
+  // PIRATETRADER storage
+  private optionTrades: Map<string, OptionTrade>;
+  private dailySessions: Map<string, DailySession>;
+  private weeklyPaychecks: Map<string, WeeklyPaycheck>;
+  private ruleViolations: Map<string, RuleViolation>;
 
   constructor() {
     this.users = new Map();
@@ -121,6 +157,11 @@ export class MemStorage implements IStorage {
     this.patternSignals = new Map();
     this.patternConfigs = new Map();
     this.patternOutcomes = new Map();
+    // PIRATETRADER storage
+    this.optionTrades = new Map();
+    this.dailySessions = new Map();
+    this.weeklyPaychecks = new Map();
+    this.ruleViolations = new Map();
 
     // Initialize with a demo user
     this.initializeDemoData();
@@ -804,6 +845,145 @@ export class MemStorage implements IStorage {
         };
       })
     };
+  }
+
+  // PIRATETRADER implementation methods
+  async createOptionTrade(insertTrade: InsertOptionTrade): Promise<OptionTrade> {
+    const id = randomUUID();
+    const trade: OptionTrade = {
+      id,
+      ...insertTrade,
+      openedAt: insertTrade.openedAt || new Date(),
+      isActive: insertTrade.isActive ?? true,
+      hasStrayLegs: insertTrade.hasStrayLegs ?? false,
+      legsClosed: insertTrade.legsClosed ?? false,
+      closedAt: insertTrade.closedAt || null,
+      realizedPnl: insertTrade.realizedPnl || null
+    };
+    this.optionTrades.set(id, trade);
+    return trade;
+  }
+
+  async getOptionTrades(userId: string, limit?: number): Promise<OptionTrade[]> {
+    const userTrades = Array.from(this.optionTrades.values())
+      .filter(trade => trade.userId === userId)
+      .sort((a, b) => new Date(b.openedAt).getTime() - new Date(a.openedAt).getTime());
+    
+    return limit ? userTrades.slice(0, limit) : userTrades;
+  }
+
+  async getActiveOptionTrades(userId: string, symbol?: string): Promise<OptionTrade[]> {
+    let activeTrades = Array.from(this.optionTrades.values())
+      .filter(trade => trade.userId === userId && trade.isActive);
+    
+    if (symbol) {
+      activeTrades = activeTrades.filter(trade => trade.symbol === symbol);
+    }
+    
+    return activeTrades;
+  }
+
+  async updateOptionTrade(id: string, updates: Partial<OptionTrade>): Promise<OptionTrade | undefined> {
+    const trade = this.optionTrades.get(id);
+    if (!trade) return undefined;
+    
+    const updatedTrade = { ...trade, ...updates };
+    this.optionTrades.set(id, updatedTrade);
+    return updatedTrade;
+  }
+
+  async createDailySession(insertSession: InsertDailySession): Promise<DailySession> {
+    const id = randomUUID();
+    const session: DailySession = {
+      id,
+      ...insertSession,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    this.dailySessions.set(id, session);
+    return session;
+  }
+
+  async getDailySession(userId: string, date: string): Promise<DailySession | undefined> {
+    return Array.from(this.dailySessions.values())
+      .find(session => 
+        session.userId === userId && 
+        session.sessionDate.toISOString().split('T')[0] === date
+      );
+  }
+
+  async updateDailySession(id: string, updates: Partial<DailySession>): Promise<DailySession | undefined> {
+    const session = this.dailySessions.get(id);
+    if (!session) return undefined;
+    
+    const updatedSession = { ...session, ...updates, updatedAt: new Date() };
+    this.dailySessions.set(id, updatedSession);
+    return updatedSession;
+  }
+
+  async createWeeklyPaycheck(insertPaycheck: InsertWeeklyPaycheck): Promise<WeeklyPaycheck> {
+    const id = randomUUID();
+    const paycheck: WeeklyPaycheck = {
+      id,
+      ...insertPaycheck,
+      createdAt: new Date()
+    };
+    this.weeklyPaychecks.set(id, paycheck);
+    return paycheck;
+  }
+
+  async getWeeklyPaycheck(userId: string, weekStart: Date): Promise<WeeklyPaycheck | undefined> {
+    return Array.from(this.weeklyPaychecks.values())
+      .find(paycheck => 
+        paycheck.userId === userId && 
+        paycheck.weekStarting.toISOString().split('T')[0] === weekStart.toISOString().split('T')[0]
+      );
+  }
+
+  async updateWeeklyPaycheck(id: string, updates: Partial<WeeklyPaycheck>): Promise<WeeklyPaycheck | undefined> {
+    const paycheck = this.weeklyPaychecks.get(id);
+    if (!paycheck) return undefined;
+    
+    const updatedPaycheck = { ...paycheck, ...updates };
+    this.weeklyPaychecks.set(id, updatedPaycheck);
+    return updatedPaycheck;
+  }
+
+  async createRuleViolation(insertViolation: InsertRuleViolation): Promise<RuleViolation> {
+    const id = randomUUID();
+    const violation: RuleViolation = {
+      id,
+      ...insertViolation,
+      detectedAt: new Date()
+    };
+    this.ruleViolations.set(id, violation);
+    return violation;
+  }
+
+  async getRuleViolations(userId: string, limit?: number): Promise<RuleViolation[]> {
+    const userViolations = Array.from(this.ruleViolations.values())
+      .filter(violation => violation.userId === userId)
+      .sort((a, b) => new Date(b.detectedAt).getTime() - new Date(a.detectedAt).getTime());
+    
+    return limit ? userViolations.slice(0, limit) : userViolations;
+  }
+
+  async getActiveViolations(userId: string): Promise<RuleViolation[]> {
+    return Array.from(this.ruleViolations.values())
+      .filter(violation => 
+        violation.userId === userId && 
+        !violation.userAcknowledged && 
+        !violation.autoResolved
+      );
+  }
+
+  async acknowledgeViolation(id: string): Promise<RuleViolation | undefined> {
+    const violation = this.ruleViolations.get(id);
+    if (!violation) return undefined;
+    
+    const updatedViolation = { ...violation, userAcknowledged: true };
+    this.ruleViolations.set(id, updatedViolation);
+    return updatedViolation;
   }
 }
 

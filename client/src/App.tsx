@@ -13,6 +13,7 @@ import Analytics from "@/pages/analytics";
 import RiskManagement from "@/pages/risk-management";
 import Settings from "@/pages/settings";
 import AIInsights from "@/pages/AIInsights";
+import TradingCompliance from "@/pages/TradingCompliance";
 import Sidebar from "@/components/layout/sidebar";
 
 function Router() {
@@ -28,6 +29,7 @@ function Router() {
           <Route path="/trade-history" component={TradeHistory} />
           <Route path="/analytics" component={Analytics} />
           <Route path="/ai-insights" component={AIInsights} />
+          <Route path="/trading-compliance" component={TradingCompliance} />
           <Route path="/risk-management" component={RiskManagement} />
           <Route path="/settings" component={Settings} />
           <Route component={NotFound} />

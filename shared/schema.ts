@@ -64,12 +64,32 @@ export const PATTERN_TYPES = [
 export const TRADE_SIDES = ['buy', 'sell'] as const;
 export const TRADE_STATUSES = ['pending', 'filled', 'cancelled', 'rejected'] as const;
 
+// PIRATETRADER rule constants
+export const OPTION_TYPES = ['call_debit_spread', 'put_debit_spread', 'call_credit_spread', 'put_credit_spread'] as const;
+export const TRADING_SESSIONS = ['first_hour', 'last_hour', 'midday'] as const;
+export const SETUP_TYPES = ['ema_pullback', 'momentum_pop', 'yesterday_setup', 'quick_scalp'] as const;
+export const RULE_VIOLATIONS = [
+  'stray_leg_detected',
+  'walk_rule_exceeded', 
+  'daily_loss_limit',
+  'risk_per_trade',
+  'naked_options',
+  'outside_trading_window',
+  'insufficient_oi',
+  'wide_bid_ask',
+  'stale_catalyst'
+] as const;
+
 // Zod enums
 export const timeframeEnum = z.enum(TIMEFRAMES);
 export const strategyTypeEnum = z.enum(STRATEGY_TYPES);
 export const patternTypeEnum = z.enum(PATTERN_TYPES);
 export const tradeSideEnum = z.enum(TRADE_SIDES);
 export const tradeStatusEnum = z.enum(TRADE_STATUSES);
+export const optionTypeEnum = z.enum(OPTION_TYPES);
+export const tradingSessionEnum = z.enum(TRADING_SESSIONS);
+export const setupTypeEnum = z.enum(SETUP_TYPES);
+export const ruleViolationEnum = z.enum(RULE_VIOLATIONS);
 
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -182,6 +202,131 @@ export const patternSignals = pgTable("pattern_signals", {
   uniquePatternDetection: unique("pattern_signals_unique_detection").on(table.strategyId, table.symbol, table.patternType, table.timeframe, table.detectedAt),
 }));
 
+// PIRATETRADER compliance tracking tables
+export const optionTrades = pgTable("option_trades", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  tradeId: varchar("trade_id").references(() => trades.id),
+  symbol: text("symbol").notNull(),
+  optionType: text("option_type").notNull(), // call_debit_spread, put_debit_spread, etc.
+  setupType: text("setup_type").notNull(), // ema_pullback, momentum_pop, yesterday_setup, quick_scalp
+  tradingSession: text("trading_session").notNull(), // first_hour, last_hour, midday
+  
+  // Spread details
+  longStrike: decimal("long_strike", { precision: 8, scale: 2 }).notNull(),
+  shortStrike: decimal("short_strike", { precision: 8, scale: 2 }).notNull(),
+  expiration: timestamp("expiration").notNull(),
+  debit: decimal("debit", { precision: 8, scale: 2 }).notNull(), // Amount paid for spread
+  maxRisk: decimal("max_risk", { precision: 8, scale: 2 }).notNull(), // $40-80 per PIRATETRADER rules
+  maxProfit: decimal("max_profit", { precision: 8, scale: 2 }),
+  
+  // RULE ONE compliance
+  hasStrayLegs: boolean("has_stray_legs").notNull().default(false),
+  legsClosed: boolean("legs_closed").notNull().default(false),
+  
+  // AI analysis
+  aiRecommendation: jsonb("ai_recommendation"), // AI analysis that led to this trade
+  catalystAge: integer("catalyst_age"), // Hours since catalyst (must be ≤4h)
+  rvol: decimal("rvol", { precision: 5, scale: 2 }), // Must be ≥1.5
+  
+  openedAt: timestamp("opened_at").notNull(),
+  closedAt: timestamp("closed_at"),
+  realizedPnl: decimal("realized_pnl", { precision: 8, scale: 2 }),
+  isActive: boolean("is_active").notNull().default(true),
+}, (table) => ({
+  userIdIdx: index("option_trades_user_id_idx").on(table.userId),
+  symbolIdx: index("option_trades_symbol_idx").on(table.symbol),
+  openedAtIdx: index("option_trades_opened_at_idx").on(table.openedAt),
+  activeTradesIdx: index("option_trades_active_idx").on(table.userId, table.isActive),
+}));
+
+export const dailySessions = pgTable("daily_sessions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  sessionDate: timestamp("session_date").notNull(),
+  
+  // Walk rule tracking
+  dailyPnl: decimal("daily_pnl", { precision: 8, scale: 2 }).notNull().default('0'),
+  tradeCount: integer("trade_count").notNull().default(0),
+  redTrades: integer("red_trades").notNull().default(0), // Track consecutive losses
+  walkRuleTriggered: boolean("walk_rule_triggered").notNull().default(false),
+  walkRuleReason: text("walk_rule_reason"), // '+$200 profit' or '3 consecutive losses'
+  
+  // Trading window compliance
+  firstHourTrades: integer("first_hour_trades").notNull().default(0),
+  lastHourTrades: integer("last_hour_trades").notNull().default(0),
+  middayTrades: integer("midday_trades").notNull().default(0),
+  
+  // Risk compliance
+  maxRiskPerTrade: decimal("max_risk_per_trade", { precision: 8, scale: 2 }),
+  totalRiskToday: decimal("total_risk_today", { precision: 8, scale: 2 }).notNull().default('0'),
+  dailyLossLimit: decimal("daily_loss_limit", { precision: 8, scale: 2 }).notNull().default('-240'), // -$240 max
+  
+  // GTC order tracking
+  gtcOrdersActive: integer("gtc_orders_active").notNull().default(0),
+  gtcOrdersCancelled: boolean("gtc_orders_cancelled").notNull().default(false),
+  
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => ({
+  userIdDateIdx: index("daily_sessions_user_date_idx").on(table.userId, table.sessionDate),
+  sessionDateIdx: index("daily_sessions_date_idx").on(table.sessionDate),
+  userIdDateUnique: unique("daily_sessions_user_date_unique").on(table.userId, table.sessionDate),
+}));
+
+export const weeklyPaychecks = pgTable("weekly_paychecks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  weekStarting: timestamp("week_starting").notNull(), // Monday of the week
+  
+  // Paycheck goals
+  baselineGoal: decimal("baseline_goal", { precision: 8, scale: 2 }).notNull().default('300'), // $300-500 baseline
+  stretchGoal: decimal("stretch_goal", { precision: 8, scale: 2 }).notNull().default('750'), // $750-1000 stretch
+  actualPnl: decimal("actual_pnl", { precision: 8, scale: 2 }).notNull().default('0'),
+  
+  // Weekly trade summary
+  totalTrades: integer("total_trades").notNull().default(0),
+  winningTrades: integer("winning_trades").notNull().default(0),
+  losingTrades: integer("losing_trades").notNull().default(0),
+  paycheckMet: boolean("paycheck_met").notNull().default(false),
+  
+  // Weekly compliance
+  avgRiskPerTrade: decimal("avg_risk_per_trade", { precision: 8, scale: 2 }),
+  maxWeeklyDrawdown: decimal("max_weekly_drawdown", { precision: 8, scale: 2 }),
+  
+  isComplete: boolean("is_complete").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => ({
+  userIdWeekIdx: index("weekly_paychecks_user_week_idx").on(table.userId, table.weekStarting),
+  weekStartingIdx: index("weekly_paychecks_week_idx").on(table.weekStarting),
+  userIdWeekUnique: unique("weekly_paychecks_user_week_unique").on(table.userId, table.weekStarting),
+}));
+
+export const ruleViolations = pgTable("rule_violations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  sessionId: varchar("session_id").references(() => dailySessions.id),
+  optionTradeId: varchar("option_trade_id").references(() => optionTrades.id),
+  
+  violationType: text("violation_type").notNull(), // RULE_VIOLATIONS enum
+  severity: text("severity").notNull().default('warning'), // warning, error, critical
+  description: text("description").notNull(),
+  ruleReference: text("rule_reference"), // Reference to specific rule (e.g., "RULE ONE", "Walk Rule")
+  
+  // Violation details
+  detectedValue: text("detected_value"), // What triggered the violation
+  allowedValue: text("allowed_value"), // What the rule allows
+  autoResolved: boolean("auto_resolved").notNull().default(false),
+  userAcknowledged: boolean("user_acknowledged").notNull().default(false),
+  
+  detectedAt: timestamp("detected_at").notNull().defaultNow(),
+}, (table) => ({
+  userIdIdx: index("rule_violations_user_id_idx").on(table.userId),
+  sessionIdIdx: index("rule_violations_session_id_idx").on(table.sessionId),
+  violationTypeIdx: index("rule_violations_type_idx").on(table.violationType),
+  detectedAtIdx: index("rule_violations_detected_at_idx").on(table.detectedAt),
+}));
+
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users).pick({
   username: true,
@@ -286,6 +431,42 @@ export const insertPatternOutcomeSchema = z.object({
   metadata: z.record(z.any()).optional().default({}),
 });
 
+// PIRATETRADER insert schemas
+export const insertOptionTradeSchema = createInsertSchema(optionTrades).omit({
+  id: true,
+}).extend({
+  optionType: optionTypeEnum,
+  setupType: setupTypeEnum,
+  tradingSession: tradingSessionEnum,
+  debit: z.string().refine((val) => {
+    const num = parseFloat(val);
+    return num > 0;
+  }, "Debit must be greater than 0"),
+  maxRisk: z.string().refine((val) => {
+    const num = parseFloat(val);
+    return num >= 40 && num <= 80;
+  }, "Max risk must be between $40 and $80 per PIRATETRADER rules"),
+});
+
+export const insertDailySessionSchema = createInsertSchema(dailySessions).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertWeeklyPaycheckSchema = createInsertSchema(weeklyPaychecks).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertRuleViolationSchema = createInsertSchema(ruleViolations).omit({
+  id: true,
+  detectedAt: true,
+}).extend({
+  violationType: ruleViolationEnum,
+  severity: z.enum(['warning', 'error', 'critical']).default('warning'),
+});
+
 // Types
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
@@ -307,6 +488,19 @@ export type PatternSignal = typeof patternSignals.$inferSelect;
 
 export type InsertOHLCVCandles = z.infer<typeof insertOHLCVCandlesSchema>;
 export type OHLCVCandles = typeof ohlcvCandles.$inferSelect;
+
+// PIRATETRADER types
+export type InsertOptionTrade = z.infer<typeof insertOptionTradeSchema>;
+export type OptionTrade = typeof optionTrades.$inferSelect;
+
+export type InsertDailySession = z.infer<typeof insertDailySessionSchema>;
+export type DailySession = typeof dailySessions.$inferSelect;
+
+export type InsertWeeklyPaycheck = z.infer<typeof insertWeeklyPaycheckSchema>;
+export type WeeklyPaycheck = typeof weeklyPaychecks.$inferSelect;
+
+export type InsertRuleViolation = z.infer<typeof insertRuleViolationSchema>;
+export type RuleViolation = typeof ruleViolations.$inferSelect;
 
 // API Response types
 export interface PortfolioSummary {

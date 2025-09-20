@@ -10,7 +10,8 @@ import {
   FileText, 
   Activity, 
   Bot,
-  Brain
+  Brain,
+  ShieldCheck
 } from "lucide-react";
 
 const navigation = [
@@ -21,6 +22,7 @@ const navigation = [
   { name: "Trade History", href: "/trade-history", icon: History },
   { name: "Analytics", href: "/analytics", icon: BarChart3 },
   { name: "AI Insights", href: "/ai-insights", icon: Brain },
+  { name: "Trading Compliance", href: "/trading-compliance", icon: ShieldCheck },
   { name: "Risk Management", href: "/risk-management", icon: Shield },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
@@ -47,16 +49,15 @@ export default function Sidebar() {
               key={item.name} 
               href={item.href}
               data-testid={`nav-link-${item.name.toLowerCase().replace(/\s+/g, '-')}`}
-            >
-              <a className={cn(
+              className={cn(
                 "flex items-center space-x-3 px-3 py-2 rounded-md transition-colors",
                 isActive 
                   ? "bg-accent text-accent-foreground" 
                   : "hover:bg-accent hover:text-accent-foreground"
-              )}>
-                <item.icon className="w-5 h-5" />
-                <span>{item.name}</span>
-              </a>
+              )}
+            >
+              <item.icon className="w-5 h-5" />
+              <span>{item.name}</span>
             </Link>
           );
         })}

@@ -198,6 +198,168 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // PIRATETRADER compliance endpoints
+  app.get("/api/compliance/status", requireAuth, async (req: any, res) => {
+    try {
+      const { default: TradingRulesEngine } = await import('./services/tradingRulesEngine.ts');
+      const rulesEngine = new TradingRulesEngine(storage, null); // No Schwab service needed for status
+      
+      const status = await rulesEngine.getComplianceStatus(req.userId);
+      res.json(status);
+    } catch (error) {
+      console.error('Error getting compliance status:', error);
+      res.status(500).json({ error: 'Failed to get compliance status' });
+    }
+  });
+
+  app.post("/api/compliance/validate-trade", requireAuth, requireBrokerAuth, async (req: any, res) => {
+    try {
+      const { service } = req.broker;
+      const { default: TradingRulesEngine } = await import('./services/tradingRulesEngine.ts');
+      const rulesEngine = new TradingRulesEngine(storage, service);
+      
+      const validation = await rulesEngine.validateTrade(req.userId, req.body);
+      res.json(validation);
+    } catch (error) {
+      console.error('Error validating trade:', error);
+      res.status(500).json({ error: 'Failed to validate trade' });
+    }
+  });
+
+  app.post("/api/compliance/option-trade", requireAuth, async (req: any, res) => {
+    try {
+      // Import schemas for validation
+      const { insertOptionTradeSchema } = await import('@shared/schema');
+      
+      // Validate request body
+      const validatedData = insertOptionTradeSchema.parse({
+        ...req.body,
+        userId: req.userId,
+      });
+
+      const windowResult = new (await import('./services/tradingRulesEngine.ts')).default(storage, null).validateTradingWindow();
+      
+      const optionTrade = await storage.createOptionTrade({
+        ...validatedData,
+        tradingSession: windowResult.session || 'outside_window',
+        longStrike: validatedData.longStrike.toString(),
+        shortStrike: validatedData.shortStrike.toString(),
+        expiration: new Date(validatedData.expiration),
+        debit: validatedData.debit.toString(),
+        maxRisk: validatedData.maxRisk.toString(),
+        maxProfit: validatedData.maxProfit?.toString() || null,
+        aiRecommendation: validatedData.aiRecommendation || null,
+        catalystAge: validatedData.catalystAge || null,
+        rvol: validatedData.rvol?.toString() || null
+      });
+
+      res.json(optionTrade);
+    } catch (error) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ error: 'Invalid request data', details: error.errors });
+      }
+      console.error('Error creating option trade:', error);
+      res.status(500).json({ error: 'Failed to create option trade' });
+    }
+  });
+
+  app.get("/api/compliance/option-trades", requireAuth, async (req: any, res) => {
+    try {
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const trades = await storage.getOptionTrades(req.userId, limit);
+      res.json(trades);
+    } catch (error) {
+      console.error('Error getting option trades:', error);
+      res.status(500).json({ error: 'Failed to get option trades' });
+    }
+  });
+
+  app.get("/api/compliance/violations", requireAuth, async (req: any, res) => {
+    try {
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : 20;
+      const violations = await storage.getRuleViolations(req.userId, limit);
+      res.json(violations);
+    } catch (error) {
+      console.error('Error getting rule violations:', error);
+      res.status(500).json({ error: 'Failed to get rule violations' });
+    }
+  });
+
+  app.post("/api/compliance/acknowledge-violation/:id", requireAuth, async (req: any, res) => {
+    try {
+      const violation = await storage.acknowledgeViolation(req.params.id);
+      if (!violation) {
+        return res.status(404).json({ error: 'Violation not found' });
+      }
+      res.json(violation);
+    } catch (error) {
+      console.error('Error acknowledging violation:', error);
+      res.status(500).json({ error: 'Failed to acknowledge violation' });
+    }
+  });
+
+  app.get("/api/compliance/gtc-check", requireAuth, async (req: any, res) => {
+    try {
+      const { default: TradingRulesEngine } = await import('./services/tradingRulesEngine.ts');
+      const rulesEngine = new TradingRulesEngine(storage, null);
+      
+      const gtcCheck = await rulesEngine.checkGTCCancellation(req.userId);
+      res.json(gtcCheck);
+    } catch (error) {
+      console.error('Error checking GTC orders:', error);
+      res.status(500).json({ error: 'Failed to check GTC orders' });
+    }
+  });
+
+  // Four Gates Scanner endpoints
+  app.get("/api/scanner/four-gates", requireAuth, async (req: any, res) => {
+    try {
+      const { service } = req.broker || { service: null };
+      const { FourGatesScanner } = await import('./services/fourGatesScanner.ts');
+      const scanner = new FourGatesScanner(storage, service);
+      
+      const criteria = {
+        minRvol: parseFloat(req.query.minRvol) || 1.5,
+        maxCatalystAge: parseInt(req.query.maxCatalystAge) || 48,
+        minPrice: parseFloat(req.query.minPrice) || 5,
+        maxPrice: parseFloat(req.query.maxPrice) || 100,
+        maxFloat: parseFloat(req.query.maxFloat) || 100,
+        requireGap: req.query.requireGap === 'true',
+        minGapPercent: parseFloat(req.query.minGapPercent) || 2
+      };
+      
+      const setups = await scanner.scanForSetups(criteria);
+      res.json(setups);
+    } catch (error) {
+      console.error('Error scanning for Four Gates setups:', error);
+      res.status(500).json({ error: 'Failed to scan for setups' });
+    }
+  });
+
+  app.get("/api/scanner/analyze/:symbol", requireAuth, async (req: any, res) => {
+    try {
+      const { service } = req.broker || { service: null };
+      const { FourGatesScanner } = await import('./services/fourGatesScanner.ts');
+      const scanner = new FourGatesScanner(storage, service);
+      
+      const analysis = await scanner.analyzeSymbol(req.params.symbol.toUpperCase());
+      if (!analysis) {
+        return res.status(404).json({ error: 'Symbol not found or does not meet criteria' });
+      }
+      
+      // Add PIRATETRADER validation
+      const validation = scanner.validateForPirateTrader(analysis);
+      
+      res.json({
+        setup: analysis,
+        validation
+      });
+    } catch (error) {
+      console.error('Error analyzing symbol:', error);
+      res.status(500).json({ error: 'Failed to analyze symbol' });
+    }
+  });
+
   // Portfolio endpoints
   app.get("/api/portfolio/summary", requireAuth, async (req: any, res) => {
     try {
