@@ -145,9 +145,10 @@ export interface IStorage {
   getLatestStrategicAnalysis(userId: string): Promise<StrategicAnalysis | null>;
   getStrategicAnalysisHistory(userId: string): Promise<StrategicAnalysis[]>;
   createPortfolioHolding(holding: InsertPortfolioHolding): Promise<PortfolioHolding>;
+  upsertPortfolioHolding(holding: InsertPortfolioHolding): Promise<PortfolioHolding>;
   getPortfolioHoldings(userId: string): Promise<PortfolioHolding[]>;
   createEconomicEvent(event: InsertEconomicEvent): Promise<EconomicEvent>;
-  getUpcomingEconomicEvents(): Promise<EconomicEvent[]>;
+  getUpcomingEconomicEvents(daysAhead?: number): Promise<EconomicEvent[]>;
 
   // Algorithmic Trading Strategies
   createAlgorithmicStrategy(strategy: InsertAlgorithmicStrategy): Promise<AlgorithmicStrategy>;
@@ -211,6 +212,9 @@ export class MemStorage implements IStorage {
 
     // Initialize with a demo user
     this.initializeDemoData();
+    
+    // Start cache cleanup to prevent memory leaks
+    this.startCacheCleanup();
   }
 
   private async initializeDemoData() {
@@ -757,6 +761,7 @@ export class MemStorage implements IStorage {
   // Performance analytics caching for heavy computations
   private performanceCache = new Map<string, { data: any; timestamp: Date; ttl: number }>();
   private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+  private cacheCleanupInterval: NodeJS.Timeout | null = null;
 
   private getCachedResult<T>(key: string): T | null {
     const cached = this.performanceCache.get(key);
@@ -772,6 +777,26 @@ export class MemStorage implements IStorage {
       timestamp: new Date(),
       ttl
     });
+  }
+
+  private startCacheCleanup(): void {
+    // Clean up expired cache entries every 10 minutes
+    this.cacheCleanupInterval = setInterval(() => {
+      const now = Date.now();
+      for (const [key, entry] of this.performanceCache.entries()) {
+        if (now - entry.timestamp.getTime() > entry.ttl) {
+          this.performanceCache.delete(key);
+        }
+      }
+    }, 10 * 60 * 1000); // 10 minutes
+  }
+
+  public cleanup(): void {
+    if (this.cacheCleanupInterval) {
+      clearInterval(this.cacheCleanupInterval);
+      this.cacheCleanupInterval = null;
+    }
+    this.performanceCache.clear();
   }
 
   // Enhanced Analytics methods
@@ -1072,6 +1097,29 @@ export class MemStorage implements IStorage {
       .filter(holding => holding.userId === userId && holding.isActive);
   }
 
+  async createPortfolioHolding(insertHolding: InsertPortfolioHolding): Promise<PortfolioHolding> {
+    const id = randomUUID();
+    const holding: PortfolioHolding = {
+      ...insertHolding,
+      id,
+      currentPrice: insertHolding.currentPrice?.toString() || null,
+      marketValue: insertHolding.marketValue?.toString() || null,
+      unrealizedPnl: insertHolding.unrealizedPnl?.toString() || null,
+      averageCost: insertHolding.averageCost.toString(),
+      beta: insertHolding.beta?.toString() || null,
+      sector: insertHolding.sector || null,
+      marketCap: insertHolding.marketCap || null,
+      riskRating: insertHolding.riskRating || null,
+      catalysts: insertHolding.catalysts || null,
+      technicalLevel: insertHolding.technicalLevel || null,
+      isActive: insertHolding.isActive ?? true,
+      lastUpdated: new Date(),
+      createdAt: new Date()
+    };
+    this.portfolioHoldings.set(id, holding);
+    return holding;
+  }
+
   async upsertPortfolioHolding(insertHolding: InsertPortfolioHolding): Promise<PortfolioHolding> {
     // Check if holding already exists for this user and symbol
     const existingHolding = Array.from(this.portfolioHoldings.values())
@@ -1087,27 +1135,8 @@ export class MemStorage implements IStorage {
       this.portfolioHoldings.set(existingHolding.id, updatedHolding);
       return updatedHolding;
     } else {
-      // Create new holding
-      const id = randomUUID();
-      const holding: PortfolioHolding = {
-        ...insertHolding,
-        id,
-        currentPrice: insertHolding.currentPrice?.toString() || null,
-        marketValue: insertHolding.marketValue?.toString() || null,
-        unrealizedPnl: insertHolding.unrealizedPnl?.toString() || null,
-        averageCost: insertHolding.averageCost.toString(),
-        beta: insertHolding.beta?.toString() || null,
-        sector: insertHolding.sector || null,
-        marketCap: insertHolding.marketCap || null,
-        riskRating: insertHolding.riskRating || null,
-        catalysts: insertHolding.catalysts || null,
-        technicalLevel: insertHolding.technicalLevel || null,
-        isActive: insertHolding.isActive ?? true,
-        lastUpdated: new Date(),
-        createdAt: new Date()
-      };
-      this.portfolioHoldings.set(id, holding);
-      return holding;
+      // Create new holding using the proper method
+      return this.createPortfolioHolding(insertHolding);
     }
   }
 
