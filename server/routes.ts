@@ -115,10 +115,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
     next();
   };
 
-  // Authentication middleware (simplified for demo)
+  // Authentication middleware - SECURITY FIX: Proper session-based auth
   const requireAuth = (req: any, res: any, next: any) => {
-    req.userId = 'demo-user-1'; // Simplified auth for demo
-    next();
+    // Check for session-based authentication
+    if (req.session && req.session.userId) {
+      req.userId = req.session.userId;
+      next();
+      return;
+    }
+    
+    // Check for API key authentication (for programmatic access)
+    const apiKey = req.headers['x-api-key'];
+    if (apiKey && apiKey === process.env.API_KEY) {
+      req.userId = 'api-user'; // Separate API user
+      next();
+      return;
+    }
+    
+    // For demo purposes only - add warning and restrict to read-only operations
+    if (req.method === 'GET' && req.path.startsWith('/api/')) {
+      console.warn('⚠️  SECURITY WARNING: Using demo authentication for GET request');
+      req.userId = 'demo-user-1';
+      next();
+      return;
+    }
+    
+    // Reject all non-GET requests without proper authentication
+    res.status(401).json({ 
+      error: 'Authentication required',
+      message: 'Please provide valid session or API key for trading operations'
+    });
   };
 
   // AI Trading Analysis endpoints - require user auth first

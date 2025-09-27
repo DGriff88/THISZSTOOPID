@@ -22,7 +22,10 @@ export class TradingWebSocketService {
   constructor(server: Server) {
     this.wss = new WebSocketServer({ server, path: '/ws' });
     this.setupWebSocketServer();
-    this.startMarketDataStream();
+    // Delay market data stream to avoid race conditions
+    setTimeout(() => {
+      this.startMarketDataStream();
+    }, 1000);
   }
 
   private setupWebSocketServer(): void {
@@ -160,10 +163,22 @@ export class TradingWebSocketService {
   }
 
   private startMarketDataStream(): void {
+    // Prevent multiple intervals from being created
+    if (this.marketDataInterval) {
+      console.warn('Market data stream already running, skipping start');
+      return;
+    }
+    
     // Stream market data every 5 seconds
     this.marketDataInterval = setInterval(async () => {
-      await this.broadcastMarketData();
+      try {
+        await this.broadcastMarketData();
+      } catch (error) {
+        console.error('Error in market data broadcast:', error);
+      }
     }, 5000);
+    
+    console.log('Market data stream started');
   }
 
   private async broadcastMarketData(): Promise<void> {
