@@ -88,6 +88,11 @@ export const RULE_VIOLATIONS = [
   'stale_catalyst'
 ] as const;
 
+// Journal entry types
+export const TRADE_TYPES = ['LONG', 'SHORT', 'OPTION_CALL', 'OPTION_PUT', 'SPREAD'] as const;
+export const TRADE_QUALITIES = ['POOR', 'BELOW_AVERAGE', 'AVERAGE', 'GOOD', 'EXCELLENT'] as const;
+export const MARKET_CONDITIONS = ['BULL', 'BEAR', 'SIDEWAYS', 'VOLATILE', 'TRENDING_UP', 'TRENDING_DOWN'] as const;
+
 // Zod enums
 export const timeframeEnum = z.enum(TIMEFRAMES);
 export const strategyTypeEnum = z.enum(STRATEGY_TYPES);
@@ -98,6 +103,9 @@ export const optionTypeEnum = z.enum(OPTION_TYPES);
 export const tradingSessionEnum = z.enum(TRADING_SESSIONS);
 export const setupTypeEnum = z.enum(SETUP_TYPES);
 export const ruleViolationEnum = z.enum(RULE_VIOLATIONS);
+export const tradeTypeEnum = z.enum(TRADE_TYPES);
+export const tradeQualityEnum = z.enum(TRADE_QUALITIES);
+export const marketConditionEnum = z.enum(MARKET_CONDITIONS);
 
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -418,6 +426,61 @@ export const economicEvents = pgTable("economic_events", {
 }, (table) => ({
   eventDateIdx: index("economic_events_date_idx").on(table.eventDate),
   categoryImportanceIdx: index("economic_events_category_importance_idx").on(table.category, table.importance),
+}));
+
+// Trading Journal Entries - PROFESSIONAL PERSISTENT TRACKING
+export const journalEntries = pgTable("journal_entries", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  timestamp: timestamp("timestamp").notNull().defaultNow(),
+  
+  // Core trade information
+  symbol: text("symbol").notNull(),
+  strategy: text("strategy").notNull(),
+  tradeType: text("trade_type").notNull(), // LONG, SHORT, OPTION_CALL, etc.
+  spreadType: text("spread_type"), // For options spreads
+  
+  // Position details
+  entryPrice: decimal("entry_price", { precision: 12, scale: 4 }).notNull(),
+  exitPrice: decimal("exit_price", { precision: 12, scale: 4 }),
+  quantity: integer("quantity").notNull(),
+  positionSize: decimal("position_size", { precision: 12, scale: 2 }).notNull(),
+  
+  // Risk management
+  maxLoss: decimal("max_loss", { precision: 12, scale: 2 }).notNull(),
+  stopLoss: decimal("stop_loss", { precision: 12, scale: 4 }),
+  takeProfit: decimal("take_profit", { precision: 12, scale: 4 }),
+  riskRewardRatio: decimal("risk_reward_ratio", { precision: 5, scale: 2 }),
+  
+  // Trade quality and conditions
+  tradeQuality: text("trade_quality").notNull(), // POOR, AVERAGE, EXCELLENT, etc.
+  marketCondition: text("market_condition").notNull(), // BULL, BEAR, SIDEWAYS, etc.
+  understoodBothSides: boolean("understood_both_sides").notNull().default(false),
+  
+  // Performance tracking
+  isOpen: boolean("is_open").notNull().default(true),
+  realizedPnl: decimal("realized_pnl", { precision: 12, scale: 2 }),
+  unrealizedPnl: decimal("unrealized_pnl", { precision: 12, scale: 2 }),
+  
+  // Professional analysis fields
+  whatWentWrong: text("what_went_wrong"),
+  whatWentRight: text("what_went_right"),
+  lessonsLearned: text("lessons_learned"),
+  catalyst: text("catalyst"),
+  volumeAnalysis: text("volume_analysis"),
+  executionNotes: text("execution_notes"),
+  
+  // Tags and categorization
+  tags: text("tags").array().default([]),
+  
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => ({
+  userIdIdx: index("journal_entries_user_id_idx").on(table.userId),
+  symbolIdx: index("journal_entries_symbol_idx").on(table.symbol),
+  timestampIdx: index("journal_entries_timestamp_idx").on(table.timestamp),
+  strategyIdx: index("journal_entries_strategy_idx").on(table.strategy),
+  openTradesIdx: index("journal_entries_open_trades_idx").on(table.isOpen),
 }));
 
 // Insert schemas
@@ -885,6 +948,43 @@ export const insertAlgorithmicStrategySchema = createInsertSchema(algorithmicStr
   updatedAt: true,
 });
 export type InsertAlgorithmicStrategy = z.infer<typeof insertAlgorithmicStrategySchema>;
+
+// Trading Journal Entry schema - PROFESSIONAL PERSISTENT TRACKING
+export const insertJournalEntrySchema = createInsertSchema(journalEntries).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+}).extend({
+  tradeType: tradeTypeEnum,
+  tradeQuality: tradeQualityEnum,
+  marketCondition: marketConditionEnum,
+  entryPrice: z.string().refine((val) => {
+    const num = parseFloat(val);
+    return num > 0;
+  }, "Entry price must be positive"),
+  exitPrice: z.string().optional().refine((val) => {
+    if (!val) return true;
+    const num = parseFloat(val);
+    return num > 0;
+  }, "Exit price must be positive"),
+  quantity: z.number().int().positive("Quantity must be positive"),
+  positionSize: z.string().refine((val) => {
+    const num = parseFloat(val);
+    return num > 0;
+  }, "Position size must be positive"),
+  maxLoss: z.string().refine((val) => {
+    const num = parseFloat(val);
+    return num > 0;
+  }, "Max loss must be positive"),
+  riskRewardRatio: z.string().optional().refine((val) => {
+    if (!val) return true;
+    const num = parseFloat(val);
+    return num > 0;
+  }, "Risk/reward ratio must be positive"),
+  tags: z.array(z.string()).default([]),
+});
+export type InsertJournalEntry = z.infer<typeof insertJournalEntrySchema>;
+export type JournalEntry = typeof journalEntries.$inferSelect;
 export type AlgorithmicStrategy = typeof algorithmicStrategies.$inferSelect;
 
 export const insertStrategyStockPickSchema = createInsertSchema(strategyStockPicks).omit({

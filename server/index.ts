@@ -254,16 +254,16 @@ function generateDemoMarketData(symbol: string): any[] {
     // Add realistic price movement with trends and volatility
     const volatility = 0.02; // 2% daily volatility
     const trend = symbol === 'SPY' ? 0.0008 : symbol === 'NVDA' ? 0.002 : 0.001; // Daily trend
-    const randomMove = (Math.random() - 0.5) * volatility;
+    const deterministicMove = ((i % 10) - 5) * volatility * 0.1; // Use deterministic movement
     
     const currentPrice = i === 49 ? basePrice : data[data.length - 1].close;
-    const dailyChange = currentPrice * (trend + randomMove);
+    const dailyChange = currentPrice * (trend + deterministicMove);
     
     const open = currentPrice;
     const close = currentPrice + dailyChange;
-    const high = Math.max(open, close) * (1 + Math.random() * 0.01);
-    const low = Math.min(open, close) * (1 - Math.random() * 0.01);
-    const volume = Math.floor(1000000 + Math.random() * 5000000);
+    const high = Math.max(open, close) * 1.005; // Fixed 0.5% expansion
+    const low = Math.min(open, close) * 0.995; // Fixed 0.5% contraction
+    const volume = Math.floor(1000000 + ((i % 100) * 50000)); // Deterministic volume
     
     data.push({
       symbol,
@@ -299,7 +299,7 @@ function getBasePrice(symbol: string): number {
     'DXY': 104
   };
   
-  return basePrices[symbol] || 100 + Math.random() * 200;
+  return basePrices[symbol] || 100 + ((symbol.length % 10) * 20); // Use symbol-based price
 }
 
 function generateRealSentiment(symbol: string, marketData: any[], currentPrice: number): any {
@@ -317,12 +317,12 @@ function generateRealSentiment(symbol: string, marketData: any[], currentPrice: 
   
   if (currentPrice > sma20 && sma20 > sma50 && rsi < 70) {
     sentiment = "Bullish";
-    confidence = 0.75 + (Math.random() * 0.2);
+    confidence = 0.75 + ((symbol.length % 5) * 0.04); // Use symbol-based confidence
     insights.push(`${symbol} trading above key moving averages`);
     insights.push('Technical indicators suggest upward momentum');
   } else if (currentPrice < sma20 && sma20 < sma50 && rsi > 30) {
     sentiment = "Bearish";
-    confidence = 0.65 + (Math.random() * 0.2);
+    confidence = 0.65 + ((symbol.length % 5) * 0.04); // Use symbol-based confidence
     insights.push(`${symbol} trading below key support levels`);
     insights.push('Technical analysis indicates potential downward pressure');
   } else {

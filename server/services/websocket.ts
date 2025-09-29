@@ -175,12 +175,14 @@ export class TradingWebSocketService {
       // Get quotes for each symbol (in a real implementation, you'd use Alpaca's streaming API)
       for (const symbol of symbols) {
         try {
-          // Simulate market data for now since we don't want to hit rate limits
+          // Use deterministic market data patterns instead of random
+          const basePrice = symbol === 'AAPL' ? 175 : symbol === 'MSFT' ? 380 : 250;
+          const timeVariation = (Date.now() % 10000) / 10000; // Time-based variation
           quotes.push({
             symbol,
-            price: Math.random() * 200 + 100,
-            change: (Math.random() - 0.5) * 10,
-            changePercent: (Math.random() - 0.5) * 5,
+            price: basePrice + (timeVariation * 10),
+            change: (timeVariation - 0.5) * 5,
+            changePercent: (timeVariation - 0.5) * 2,
             timestamp: new Date().toISOString()
           });
         } catch (error) {
