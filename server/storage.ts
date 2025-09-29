@@ -1033,7 +1033,7 @@ export class MemStorage implements IStorage {
   }
 
   // Strategic Analysis methods
-  async createStrategicAnalysis(insertAnalysis: InsertStrategicAnalysis): Promise<StrategicAnalysis> {
+  async createStrategicAnalysis(userId: string, insertAnalysis: InsertStrategicAnalysis): Promise<StrategicAnalysis> {
     const id = randomUUID();
     const analysis: StrategicAnalysis = {
       ...insertAnalysis,
@@ -1250,6 +1250,35 @@ export class MemStorage implements IStorage {
       pick.status = status;
       this.strategyStockPicks.set(id, pick);
     }
+  }
+
+  async getStrategicAnalysisHistory(userId: string): Promise<StrategicAnalysis[]> {
+    return Array.from(this.strategicAnalyses.values())
+      .filter(analysis => analysis.userId === userId)
+      .sort((a, b) => b.analysisDate.getTime() - a.analysisDate.getTime());
+  }
+
+  async createPortfolioHolding(insertHolding: InsertPortfolioHolding): Promise<PortfolioHolding> {
+    const id = randomUUID();
+    const holding: PortfolioHolding = {
+      ...insertHolding,
+      id,
+      currentPrice: insertHolding.currentPrice || null,
+      marketValue: insertHolding.marketValue || null,
+      unrealizedPnl: insertHolding.unrealizedPnl || null,
+      sector: insertHolding.sector || null,
+      marketCap: insertHolding.marketCap || null,
+      beta: insertHolding.beta || null,
+      riskRating: insertHolding.riskRating || null,
+      catalysts: insertHolding.catalysts || null,
+      technicalLevel: insertHolding.technicalLevel || null,
+      isActive: insertHolding.isActive ?? true,
+      lastUpdated: new Date(),
+      createdAt: new Date()
+    };
+    
+    this.portfolioHoldings.set(id, holding);
+    return holding;
   }
 }
 

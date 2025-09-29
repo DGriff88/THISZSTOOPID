@@ -1,0 +1,23 @@
+- What trade(s) did I enter?
+- Was it a spread? Debit or credit?
+- What was the max loss?
+- Did I understand both sides of the trade?
+- What went wrong?
+- What did I learn?
+
+
+🎛 Want a Six-Stage Prompt Blueprint?
+
+I can build one that follows this structure:
+
+Scan & Filter → shortlist 3–5 tickers from your scanner rules
+
+Gate Check → run all 4 Gates (catalyst, EMA, momentum, profit math)
+
+Trade Card Builder → auto-fill your JSON template
+
+Execution Map → build trade sentence: entry, strikes, expiry, risk, R:R
+
+Risk Check → show max loss, breakeven, profit zone visual
+
+Journal Entry → log trade to your P/L sheet in one line
