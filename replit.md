@@ -1,8 +1,8 @@
-# TradeBotPro
+# PIR4T3 TRADER
 
 ## Overview
 
-TradeBotPro is a comprehensive algorithmic trading platform designed for automated strategy execution, risk management, and portfolio analysis. The application provides a full-stack solution for both paper and live trading with Alpaca API integration, featuring real-time market data processing, strategy backtesting, and portfolio monitoring capabilities.
+PIR4T3 TRADER is a comprehensive algorithmic trading platform designed for automated strategy execution, risk management, and portfolio analysis. The application provides a full-stack solution for both paper and live trading with Alpaca API integration, featuring real-time market data processing, strategy backtesting, and portfolio monitoring capabilities.
 
 ## User Preferences
 

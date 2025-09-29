@@ -40,7 +40,7 @@ export default function Sidebar() {
           <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
             <Bot className="w-5 h-5 text-primary-foreground" />
           </div>
-          <h1 className="text-xl font-bold">TradeBotPro</h1>
+          <h1 className="text-xl font-bold">PIR4T3 TRADER</h1>
         </div>
       </div>
       

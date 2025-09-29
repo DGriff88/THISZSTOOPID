@@ -19,7 +19,7 @@ export function AnimatedHolographicIcon({ size = 64, className = '' }: AnimatedH
     >
       <img 
         src={holographicCube} 
-        alt="TradeBotPro Holographic Icon"
+        alt="PIR4T3 TRADER Holographic Icon"
         style={{ 
           width: '100%', 
           height: '100%',
