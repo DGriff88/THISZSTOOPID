@@ -104,7 +104,7 @@ export class AlpacaService {
 
   async getQuote(symbol: string): Promise<AlpacaQuote> {
     const dataUrl = 'https://data.alpaca.markets/v2';
-    const response = await fetch(`${dataUrl}/stocks/${symbol}/quotes/latest`, {
+    const response = await fetch(`${dataUrl}/stocks/${symbol}/quotes/latest?feed=iex`, {
       headers: this.headers,
     });
 
@@ -124,7 +124,7 @@ export class AlpacaService {
 
   async getBars(symbol: string, timeframe: string = '1Day', start?: string, end?: string): Promise<any[]> {
     const dataUrl = 'https://data.alpaca.markets/v2';
-    let params = `?symbols=${symbol}&timeframe=${timeframe}`;
+    let params = `?symbols=${symbol}&timeframe=${timeframe}&feed=iex`;
     
     if (start) params += `&start=${start}`;
     if (end) params += `&end=${end}`;
