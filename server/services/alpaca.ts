@@ -134,7 +134,9 @@ export class AlpacaService {
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to get bars for ${symbol}`);
+      const errorText = await response.text();
+      console.error(`❌ Alpaca getBars failed for ${symbol}:`, response.status, errorText);
+      throw new Error(`Failed to get bars for ${symbol}: ${response.status} - ${errorText}`);
     }
 
     const data = await response.json();
