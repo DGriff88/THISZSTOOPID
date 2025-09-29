@@ -5,7 +5,7 @@ export function AnimatedIconDemo() {
     <div className="min-h-screen bg-black flex flex-col items-center justify-center p-8">
       <div className="text-center mb-8">
         <h1 className="text-4xl font-bold text-white mb-4">
-          TradeBotPro Animated Icon
+          PIR4T3 TRADER Animated Icon
         </h1>
         <p className="text-gray-300">
           Your holographic cube icon with spinning, glowing, and floating animations!
@@ -75,7 +75,7 @@ export function AnimatedIconDemo() {
       
       <div className="mt-8 text-center">
         <p className="text-gray-400 text-sm">
-          Ready to integrate into your TradeBotPro app! 🚀
+          Ready to integrate into your PIR4T3 TRADER app! 🚀
         </p>
       </div>
     </div>
