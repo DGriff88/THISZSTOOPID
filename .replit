@@ -14,7 +14,6 @@ run = ["npm", "run", "start"]
 PORT = "5000"
 
 [workflows]
-runButton = "Project"
 
 [[workflows.workflow]]
 name = "Project"
@@ -28,11 +27,14 @@ args = "Start application"
 [[workflows.workflow]]
 name = "Start application"
 author = "agent"
+mode = "parallel"
 
 [[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "npm run dev"
-waitForPort = 5000
+task = "packager.installForAll"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start application"
 
 [agent]
 integrations = ["javascript_mem_db:1.0.0", "javascript_websocket:1.0.0", "javascript_openai:1.0.0", "dropbox:1.0.0"]
@@ -47,7 +49,7 @@ externalPort = 3001
 
 [[ports]]
 localPort = 35755
-externalPort = 4200
+externalPort = 3003
 
 [[ports]]
 localPort = 37155
@@ -56,3 +58,6 @@ externalPort = 3002
 [[ports]]
 localPort = 40537
 externalPort = 3000
+
+[objectStorage]
+defaultBucketID = "replit-objstore-4a326ce6-4716-42f1-954f-d8b072547110"
