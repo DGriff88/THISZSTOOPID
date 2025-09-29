@@ -62,11 +62,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`🔍 GENERATING REAL SENTIMENT ANALYSIS: ${upperSymbol}`);
       
-      // GET REAL MARKET DATA via broker service
+      // GET REAL MARKET DATA with proper fallback handling
       const { getBrokerService } = await import('./services/brokerService');
-      const broker = getBrokerService();
+      const { getAlpacaService } = await import('./services/alpaca');
+      const { getSchwabService } = await import('./services/schwab');
       
-      if (!broker) {
+      // Try all available brokers in order
+      const availableBrokers = [];
+      
+      // Check for Alpaca (preferred for reliability)
+      const alpacaKey = process.env.ALPACA_API_KEY || process.env.VITE_ALPACA_API_KEY;
+      const alpacaSecret = process.env.ALPACA_API_SECRET || process.env.VITE_ALPACA_API_SECRET;
+      if (alpacaKey && alpacaSecret) {
+        availableBrokers.push({ type: 'alpaca', service: getAlpacaService });
+      }
+      
+      // Check for Schwab (fallback)
+      const schwabKey = process.env.SCHWAB_APP_KEY;
+      const schwabSecret = process.env.SCHWAB_APP_SECRET;
+      const schwabRefresh = process.env.SCHWAB_REFRESH_TOKEN;
+      if (schwabKey && schwabSecret && schwabRefresh) {
+        availableBrokers.push({ type: 'schwab', service: getSchwabService });
+      }
+      
+      if (availableBrokers.length === 0) {
         return res.status(503).json({
           error: 'No broker service available',
           message: 'Configure Alpaca or Schwab API credentials for real market data',
@@ -74,42 +93,67 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
-      const { type, service } = broker;
-      console.log(`📊 Using ${type.toUpperCase()} for real sentiment analysis`);
+      // Try each broker until one works
+      let currentPrice = null;
+      let dataArray = null;
+      let workingBrokerType = null;
       
-      // Get real current price
-      const quote = await service.getQuote(upperSymbol);
-      const currentPrice = quote.last || quote.ask || quote.bid;
-      
-      if (!currentPrice) {
-        throw new Error(`No price data available for ${upperSymbol}`);
+      for (const { type, service: serviceFactory } of availableBrokers) {
+        try {
+          console.log(`📊 Trying ${type.toUpperCase()} for sentiment analysis`);
+          const service = serviceFactory();
+          
+          // Get real current price
+          const quote = await service.getQuote(upperSymbol);
+          currentPrice = quote.last || quote.ask || quote.bid;
+          
+          if (!currentPrice) {
+            throw new Error(`No price data available from ${type}`);
+          }
+          
+          // Get real historical data for technical analysis
+          const endDate = new Date();
+          const startDate = new Date(endDate.getTime() - (30 * 24 * 60 * 60 * 1000)); // 30 days
+          
+          let historicalBars;
+          if (type === 'alpaca') {
+            historicalBars = await service.getBars(
+              upperSymbol, 
+              '1Day', 
+              startDate.toISOString().split('T')[0], 
+              endDate.toISOString().split('T')[0]
+            );
+            dataArray = historicalBars; // Alpaca returns array directly
+          } else {
+            historicalBars = await service.getHistoricalData(upperSymbol, 'daily', 30);
+            dataArray = historicalBars.candles || []; // Schwab returns { candles: [...] }
+          }
+          
+          if (!dataArray || dataArray.length < 2) {
+            throw new Error(`Insufficient historical data from ${type}`);
+          }
+          
+          workingBrokerType = type;
+          console.log(`✅ Successfully got data from ${type.toUpperCase()}`);
+          break; // Success! Exit the loop
+          
+        } catch (error: any) {
+          console.warn(`❌ ${type.toUpperCase()} failed:`, error.message);
+          continue; // Try next broker
+        }
       }
       
-      // Get real historical data for technical analysis
-      const endDate = new Date();
-      const startDate = new Date(endDate.getTime() - (30 * 24 * 60 * 60 * 1000)); // 30 days
-      
-      let historicalBars;
-      let dataArray;
-      if (type === 'alpaca') {
-        historicalBars = await service.getBars(
-          upperSymbol, 
-          '1Day', 
-          startDate.toISOString().split('T')[0], 
-          endDate.toISOString().split('T')[0]
-        );
-        dataArray = historicalBars; // Alpaca returns array directly
-      } else {
-        historicalBars = await service.getHistoricalData(upperSymbol, 'daily', 30);
-        dataArray = historicalBars.candles || []; // Schwab returns { candles: [...] }
-      }
-      
-      if (!dataArray || dataArray.length < 2) {
-        throw new Error(`Insufficient historical data for ${upperSymbol}`);
+      // If all brokers failed
+      if (!currentPrice || !dataArray || !workingBrokerType) {
+        return res.status(503).json({
+          error: 'All broker services failed',
+          message: 'Could not retrieve market data from any configured broker',
+          symbol: upperSymbol
+        });
       }
       
       // Calculate REAL technical indicators
-      const closes = type === 'alpaca' 
+      const closes = workingBrokerType === 'alpaca' 
         ? dataArray.map((bar: any) => bar.c)
         : dataArray.map((bar: any) => bar.close);
       
@@ -148,7 +192,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         recommendation: sentiment === "Bullish" ? "Consider long position" : 
                        sentiment === "Bearish" ? "Consider short position" : "Monitor for clear signals",
         riskLevel: Math.abs(dayChange) > 3 ? "High" : Math.abs(dayChange) > 1 ? "Medium" : "Low",
-        dataSource: `${type.toUpperCase()} API`,
+        dataSource: `${workingBrokerType.toUpperCase()} API`,
         timestamp: new Date().toISOString()
       };
       
@@ -395,7 +439,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           compliance: 'ACTIVE',
           system: 'PROFESSIONAL'
         },
-        dataSource: `${type.toUpperCase()} API`,
+        dataSource: `REAL BROKER API`,
         timestamp: new Date().toISOString()
       };
       
@@ -428,7 +472,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const alpacaApiKey = process.env.ALPACA_API_KEY || process.env.VITE_ALPACA_API_KEY || "";
   const alpacaApiSecret = process.env.ALPACA_API_SECRET || process.env.VITE_ALPACA_API_SECRET || "";
   
-  if (alpacaApiKey && alpacaApiSecret && !schwabAppKey) {
+  if (alpacaApiKey && alpacaApiSecret) {
     initializeAlpacaService({
       apiKey: alpacaApiKey,
       apiSecret: alpacaApiSecret,
