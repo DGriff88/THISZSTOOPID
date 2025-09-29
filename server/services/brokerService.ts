@@ -12,26 +12,15 @@ const schwabAppSecret = process.env.SCHWAB_APP_SECRET;
 const schwabRefreshToken = process.env.SCHWAB_REFRESH_TOKEN;
 
 /**
- * GET REAL BROKER SERVICE - IDENTICAL to routes.ts implementation
+ * GET REAL BROKER SERVICE - Returns available broker service
  * 
  * Returns configured broker service for real market data access
- * Priority: Schwab -> Alpaca -> null
+ * Priority: Alpaca -> Schwab (since Schwab tokens expire frequently)
  */
 export const getBrokerService = () => {
   console.log('🔍 Checking broker service availability...');
   
-  // Try Schwab first (preferred)
-  if (schwabAppKey && schwabAppSecret) {
-    try {
-      const service = getSchwabService();
-      console.log('✅ Schwab broker service available');
-      return { type: 'schwab' as const, service };
-    } catch (error) {
-      console.warn('⚠️ Schwab service not available, falling back to Alpaca');
-    }
-  }
-  
-  // Fallback to Alpaca
+  // Try Alpaca first (more reliable for automation)
   if (alpacaApiKey && alpacaApiSecret) {
     try {
       const service = getAlpacaService();
@@ -39,6 +28,17 @@ export const getBrokerService = () => {
       return { type: 'alpaca' as const, service };
     } catch (error) {
       console.warn('⚠️ Alpaca service not available');
+    }
+  }
+  
+  // Fallback to Schwab (if credentials exist)
+  if (schwabAppKey && schwabAppSecret && schwabRefreshToken) {
+    try {
+      const service = getSchwabService();
+      console.log('✅ Schwab broker service available (may have token issues)');
+      return { type: 'schwab' as const, service };
+    } catch (error: any) {
+      console.warn('⚠️ Schwab service not available:', error.message);
     }
   }
   
