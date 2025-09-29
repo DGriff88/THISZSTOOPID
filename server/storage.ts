@@ -42,7 +42,9 @@ import {
   type AlgorithmicStrategy,
   type InsertAlgorithmicStrategy,
   type StrategyStockPick,
-  type InsertStrategyStockPick
+  type InsertStrategyStockPick,
+  type JournalEntry,
+  type InsertJournalEntry
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -161,6 +163,23 @@ export interface IStorage {
   getStrategyStockPicks(strategyId: string): Promise<StrategyStockPick[]>;
   getActiveStockPicks(userId: string): Promise<StrategyStockPick[]>;
   updateStockPickStatus(id: string, status: string): Promise<void>;
+
+  // Trading Journal Entry methods - PROFESSIONAL PERSISTENT TRACKING
+  createJournalEntry(entry: InsertJournalEntry): Promise<JournalEntry>;
+  getJournalEntries(userId: string, limit?: number): Promise<JournalEntry[]>;
+  getJournalEntry(id: string): Promise<JournalEntry | undefined>;
+  updateJournalEntry(id: string, updates: Partial<JournalEntry>): Promise<JournalEntry | undefined>;
+  getJournalEntriesByStrategy(strategy: string): Promise<JournalEntry[]>;
+  getJournalEntriesBySymbol(symbol: string): Promise<JournalEntry[]>;
+  getOpenJournalEntries(userId: string): Promise<JournalEntry[]>;
+  getJournalPerformanceMetrics(userId: string): Promise<{
+    totalTrades: number;
+    winRate: number;
+    avgPnl: number;
+    totalPnl: number;
+    bestTrade: number;
+    worstTrade: number;
+  }>;
 }
 
 export class MemStorage implements IStorage {
@@ -185,6 +204,8 @@ export class MemStorage implements IStorage {
   // Algorithmic Strategies storage
   private algorithmicStrategies: Map<string, AlgorithmicStrategy>;
   private strategyStockPicks: Map<string, StrategyStockPick>;
+  // Trading Journal storage - PROFESSIONAL PERSISTENT TRACKING
+  private journalEntries: Map<string, JournalEntry>;
 
   constructor() {
     this.users = new Map();
@@ -208,9 +229,14 @@ export class MemStorage implements IStorage {
     // Algorithmic Strategies storage
     this.algorithmicStrategies = new Map();
     this.strategyStockPicks = new Map();
+    // Trading Journal storage
+    this.journalEntries = new Map();
 
     // Initialize with a demo user
     this.initializeDemoData();
+    
+    // Load existing journal entries from disk on startup
+    this.loadJournalFromFile();
   }
 
   private async initializeDemoData() {
@@ -1279,6 +1305,179 @@ export class MemStorage implements IStorage {
     
     this.portfolioHoldings.set(id, holding);
     return holding;
+  }
+
+  // Trading Journal Entry methods - ACTUAL FILE-BASED PERSISTENCE
+  async createJournalEntry(insertEntry: InsertJournalEntry): Promise<JournalEntry> {
+    const id = randomUUID();
+    const now = new Date();
+    
+    const entry: JournalEntry = {
+      ...insertEntry,
+      id,
+      timestamp: insertEntry.timestamp || now,
+      createdAt: now,
+      updatedAt: now,
+      spreadType: insertEntry.spreadType || null,
+      exitPrice: insertEntry.exitPrice || null,
+      stopLoss: insertEntry.stopLoss || null,
+      takeProfit: insertEntry.takeProfit || null,
+      riskRewardRatio: insertEntry.riskRewardRatio || null,
+      realizedPnl: insertEntry.realizedPnl || null,
+      unrealizedPnl: insertEntry.unrealizedPnl || null,
+      whatWentWrong: insertEntry.whatWentWrong || null,
+      whatWentRight: insertEntry.whatWentRight || null,
+      lessonsLearned: insertEntry.lessonsLearned || null,
+      catalyst: insertEntry.catalyst || null,
+      volumeAnalysis: insertEntry.volumeAnalysis || null,
+      executionNotes: insertEntry.executionNotes || null,
+      tags: insertEntry.tags || []
+    };
+    
+    // Store in memory AND persist to file
+    this.journalEntries.set(id, entry);
+    await this.persistJournalToFile();
+    
+    console.log(`💾 JOURNAL ENTRY PERSISTED TO DISK: ${entry.symbol} ${entry.tradeType} ${entry.strategy}`);
+    return entry;
+  }
+
+  async getJournalEntries(userId: string, limit?: number): Promise<JournalEntry[]> {
+    const userEntries = Array.from(this.journalEntries.values())
+      .filter(entry => entry.userId === userId)
+      .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+    
+    return limit ? userEntries.slice(0, limit) : userEntries;
+  }
+
+  async getJournalEntry(id: string): Promise<JournalEntry | undefined> {
+    return this.journalEntries.get(id);
+  }
+
+  async updateJournalEntry(id: string, updates: Partial<JournalEntry>): Promise<JournalEntry | undefined> {
+    const entry = this.journalEntries.get(id);
+    if (!entry) return undefined;
+    
+    const updatedEntry = { 
+      ...entry, 
+      ...updates, 
+      updatedAt: new Date() 
+    };
+    
+    // Update in memory AND persist to file
+    this.journalEntries.set(id, updatedEntry);
+    await this.persistJournalToFile();
+    
+    console.log(`💾 JOURNAL ENTRY UPDATED ON DISK: ${entry.symbol} ${entry.tradeType}`);
+    return updatedEntry;
+  }
+
+  async getJournalEntriesByStrategy(strategy: string): Promise<JournalEntry[]> {
+    return Array.from(this.journalEntries.values())
+      .filter(entry => entry.strategy === strategy)
+      .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+  }
+
+  async getJournalEntriesBySymbol(symbol: string): Promise<JournalEntry[]> {
+    return Array.from(this.journalEntries.values())
+      .filter(entry => entry.symbol === symbol)
+      .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+  }
+
+  async getOpenJournalEntries(userId: string): Promise<JournalEntry[]> {
+    return Array.from(this.journalEntries.values())
+      .filter(entry => entry.userId === userId && entry.isOpen)
+      .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+  }
+
+  async getJournalPerformanceMetrics(userId: string): Promise<{
+    totalTrades: number;
+    winRate: number;
+    avgPnl: number;
+    totalPnl: number;
+    bestTrade: number;
+    worstTrade: number;
+  }> {
+    const closedEntries = Array.from(this.journalEntries.values())
+      .filter(entry => entry.userId === userId && !entry.isOpen && entry.realizedPnl);
+    
+    if (closedEntries.length === 0) {
+      return {
+        totalTrades: 0,
+        winRate: 0,
+        avgPnl: 0,
+        totalPnl: 0,
+        bestTrade: 0,
+        worstTrade: 0
+      };
+    }
+    
+    const pnls = closedEntries.map(entry => parseFloat(entry.realizedPnl!));
+    const wins = pnls.filter(pnl => pnl > 0);
+    const totalPnl = pnls.reduce((sum, pnl) => sum + pnl, 0);
+    
+    return {
+      totalTrades: closedEntries.length,
+      winRate: (wins.length / closedEntries.length) * 100,
+      avgPnl: totalPnl / closedEntries.length,
+      totalPnl,
+      bestTrade: Math.max(...pnls),
+      worstTrade: Math.min(...pnls)
+    };
+  }
+
+  // FILE PERSISTENCE METHODS - ACTUAL DISK STORAGE
+  private readonly journalDataFile = './data/journal_entries.json';
+
+  private async persistJournalToFile(): Promise<void> {
+    try {
+      const { mkdir, writeFile } = await import('fs/promises');
+      
+      // Ensure data directory exists
+      await mkdir('./data', { recursive: true });
+      
+      // Convert Map to array for JSON serialization
+      const journalData = Array.from(this.journalEntries.entries()).map(([id, entry]) => ({
+        id,
+        ...entry,
+        timestamp: entry.timestamp.toISOString(),
+        createdAt: entry.createdAt.toISOString(),
+        updatedAt: entry.updatedAt.toISOString()
+      }));
+      
+      await writeFile(this.journalDataFile, JSON.stringify(journalData, null, 2), 'utf8');
+      console.log(`💾 ${journalData.length} journal entries persisted to disk`);
+    } catch (error) {
+      console.error('❌ Failed to persist journal to file:', error);
+    }
+  }
+
+  private async loadJournalFromFile(): Promise<void> {
+    try {
+      const { readFile } = await import('fs/promises');
+      const data = await readFile(this.journalDataFile, 'utf8');
+      const journalData = JSON.parse(data);
+      
+      // Restore Map from array data
+      this.journalEntries.clear();
+      for (const item of journalData) {
+        const entry: JournalEntry = {
+          ...item,
+          timestamp: new Date(item.timestamp),
+          createdAt: new Date(item.createdAt),
+          updatedAt: new Date(item.updatedAt)
+        };
+        this.journalEntries.set(entry.id, entry);
+      }
+      
+      console.log(`📂 ${journalData.length} journal entries loaded from disk`);
+    } catch (error) {
+      if ((error as any).code === 'ENOENT') {
+        console.log('📂 No existing journal file found, starting fresh');
+      } else {
+        console.error('❌ Failed to load journal from file:', error);
+      }
+    }
   }
 }
 

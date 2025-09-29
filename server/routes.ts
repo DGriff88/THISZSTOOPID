@@ -8,6 +8,10 @@ import { TradingWebSocketService } from "./services/websocket";
 import { HeadAndShouldersDetector } from "./services/patternDetection";
 import { RealTradingStrategiesEngine } from "./services/realTradingStrategies";
 import { OptionsEngine } from "./services/optionsEngine";
+import { AdvancedTradingStrategiesEngine } from "./services/advancedTradingStrategies";
+import { TrendTargetsIndicator } from "./services/trendTargetsIndicator";
+import { TrendReversalProbabilityCalculator } from "./services/trendReversalProbability";
+import { TradingJournalService } from "./services/tradingJournal";
 import { 
   insertStrategySchema, 
   insertTradeSchema, 
@@ -82,7 +86,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       symbol: upperSymbol,
       action: action,
       positionSize: Math.floor(parseFloat(portfolioValue as string) * 0.05),
-      entryPrice: basePrice + (Math.random() - 0.5) * 5,
+      entryPrice: basePrice + ((Date.now() % 10) - 5), // Use time-based deterministic price
       stopLoss: action === 'BUY' ? basePrice * 0.95 : basePrice * 1.05,
       targetPrice: action === 'BUY' ? basePrice * 1.08 : basePrice * 0.92,
       reasoning: `Based on technical analysis and market conditions, ${upperSymbol} presents a ${action.toLowerCase()} opportunity. Algorithm detected key support/resistance levels and momentum indicators.`,
@@ -520,21 +524,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "Access denied" });
       }
 
-      // Execute the REAL trading strategy using actual engines
+      // Execute ADVANCED trading strategies using all engines
       const realEngine = new RealTradingStrategiesEngine();
       const optionsEngine = new OptionsEngine();
+      const advancedEngine = new AdvancedTradingStrategiesEngine();
+      const trendTargets = new TrendTargetsIndicator();
+      const reversalProb = new TrendReversalProbabilityCalculator();
       let results: any = {};
       
       switch (strategy.type) {
         case 'ema_crossover':
           // Use the real EMA crossover algorithm from user's backtest files
           console.log('🚀 RUNNING REAL EMA CROSSOVER ALGORITHM');
-          results = await realEngine.runEMACrossover(strategy.symbols, {
+          
+          // Run both original and advanced analysis
+          const emaResults = await realEngine.runEMACrossover(strategy.symbols, {
             positionSize: strategy.positionSize,
             stopLoss: strategy.stopLoss,
             takeProfit: strategy.takeProfit,
             paperTrading: req.body.mode === 'paper'
           });
+          
+          // Add trend targets analysis
+          const trendAnalysis = await trendTargets.analyzeSymbol(strategy.symbols[0]);
+          
+          // Add reversal probability
+          const reversalAnalysis = await reversalProb.analyzeReversalProbability(strategy.symbols[0]);
+          
+          results = {
+            ...emaResults,
+            trendTargets: trendAnalysis,
+            reversalProbability: reversalAnalysis,
+            enhancedSignals: true
+          };
           break;
           
         case 'bollinger_mean_reversion':
@@ -585,6 +607,188 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error executing strategy:", error);
       res.status(500).json({ error: "Failed to execute strategy" });
+    }
+  });
+
+  // 💰 ADVANCED TRADING STRATEGIES - $100 TO $1000 SYSTEM
+  
+  // Get best trading opportunity using all advanced strategies
+  app.get("/api/advanced/best-opportunity/:symbol", requireAuth, async (req: any, res) => {
+    try {
+      const { symbol } = req.params;
+      const { timeframe = '1h' } = req.query;
+      
+      console.log(`🏴‍☠️ ANALYZING BEST TRADING OPPORTUNITY FOR ${symbol.toUpperCase()}`);
+      
+      const advancedEngine = new AdvancedTradingStrategiesEngine();
+      const opportunity = await advancedEngine.analyzeBestTradingOpportunity(symbol.toUpperCase(), timeframe);
+      
+      res.json(opportunity);
+    } catch (error) {
+      console.error("Error analyzing trading opportunity:", error);
+      res.status(500).json({ error: "Failed to analyze trading opportunity" });
+    }
+  });
+
+  // Trend Targets with TP1/TP2/TP3 levels
+  app.get("/api/advanced/trend-targets/:symbol", requireAuth, async (req: any, res) => {
+    try {
+      const { symbol } = req.params;
+      const { timeframe = '1h' } = req.query;
+      
+      console.log(`🎯 CALCULATING TREND TARGETS FOR ${symbol.toUpperCase()}`);
+      
+      const trendTargets = new TrendTargetsIndicator();
+      const analysis = await trendTargets.analyzeSymbol(symbol.toUpperCase(), timeframe);
+      
+      res.json(analysis);
+    } catch (error) {
+      console.error("Error calculating trend targets:", error);
+      res.status(500).json({ error: "Failed to calculate trend targets" });
+    }
+  });
+
+  // Trend Reversal Probability Calculator
+  app.get("/api/advanced/reversal-probability/:symbol", requireAuth, async (req: any, res) => {
+    try {
+      const { symbol } = req.params;
+      const { timeframe = '1h' } = req.query;
+      
+      console.log(`📊 CALCULATING REVERSAL PROBABILITY FOR ${symbol.toUpperCase()}`);
+      
+      const reversalCalc = new TrendReversalProbabilityCalculator();
+      const probability = await reversalCalc.analyzeReversalProbability(symbol.toUpperCase(), timeframe);
+      
+      res.json(probability);
+    } catch (error) {
+      console.error("Error calculating reversal probability:", error);
+      res.status(500).json({ error: "Failed to calculate reversal probability" });
+    }
+  });
+
+  // Fair Value Gap Detection
+  app.get("/api/advanced/fair-value-gaps/:symbol", requireAuth, async (req: any, res) => {
+    try {
+      const { symbol } = req.params;
+      const { timeframe = '1h' } = req.query;
+      
+      console.log(`🔍 DETECTING FAIR VALUE GAPS FOR ${symbol.toUpperCase()}`);
+      
+      const advancedEngine = new AdvancedTradingStrategiesEngine();
+      const pullbackAnalysis = await advancedEngine.analyzeTrendPullback(symbol.toUpperCase(), timeframe);
+      
+      res.json(pullbackAnalysis);
+    } catch (error) {
+      console.error("Error detecting fair value gaps:", error);
+      res.status(500).json({ error: "Failed to detect fair value gaps" });
+    }
+  });
+
+  // Volume-based Trend Reversal Analysis
+  app.get("/api/advanced/volume-reversal/:symbol", requireAuth, async (req: any, res) => {
+    try {
+      const { symbol } = req.params;
+      const { timeframe = '1h' } = req.query;
+      
+      console.log(`📈 ANALYZING VOLUME REVERSAL FOR ${symbol.toUpperCase()}`);
+      
+      const advancedEngine = new AdvancedTradingStrategiesEngine();
+      const reversalAnalysis = await advancedEngine.analyzeTrendReversal(symbol.toUpperCase(), timeframe);
+      
+      res.json(reversalAnalysis);
+    } catch (error) {
+      console.error("Error analyzing volume reversal:", error);
+      res.status(500).json({ error: "Failed to analyze volume reversal" });
+    }
+  });
+
+  // Trend Line Breakout Analysis
+  app.get("/api/advanced/trend-line-breakout/:symbol", requireAuth, async (req: any, res) => {
+    try {
+      const { symbol } = req.params;
+      const { timeframe = '1h' } = req.query;
+      
+      console.log(`📈 ANALYZING TREND LINE BREAKOUT FOR ${symbol.toUpperCase()}`);
+      
+      const advancedEngine = new AdvancedTradingStrategiesEngine();
+      const breakoutAnalysis = await advancedEngine.analyzeTrendLineBreakout(symbol.toUpperCase(), timeframe);
+      
+      res.json(breakoutAnalysis);
+    } catch (error) {
+      console.error("Error analyzing trend line breakout:", error);
+      res.status(500).json({ error: "Failed to analyze trend line breakout" });
+    }
+  });
+
+  // 📝 PROFESSIONAL TRADING JOURNAL ENDPOINTS
+
+  const journalService = new TradingJournalService();
+
+  // Create journal entry
+  app.post("/api/journal/entries", requireAuth, async (req: any, res) => {
+    try {
+      const entry = await journalService.createJournalEntry(req.userId, req.body);
+      res.json(entry);
+    } catch (error) {
+      console.error("Error creating journal entry:", error);
+      res.status(500).json({ error: "Failed to create journal entry" });
+    }
+  });
+
+  // Update trade exit
+  app.put("/api/journal/entries/:id/exit", requireAuth, async (req: any, res) => {
+    try {
+      const updatedEntry = await journalService.updateTradeExit(req.params.id, req.body);
+      res.json(updatedEntry);
+    } catch (error) {
+      console.error("Error updating trade exit:", error);
+      res.status(500).json({ error: "Failed to update trade exit" });
+    }
+  });
+
+  // Get performance metrics
+  app.get("/api/journal/performance", requireAuth, async (req: any, res) => {
+    try {
+      const { days } = req.query;
+      const metrics = journalService.calculatePerformanceMetrics(req.userId, days ? parseInt(days) : undefined);
+      res.json(metrics);
+    } catch (error) {
+      console.error("Error calculating performance metrics:", error);
+      res.status(500).json({ error: "Failed to calculate performance metrics" });
+    }
+  });
+
+  // Get trade analysis
+  app.get("/api/journal/analysis", requireAuth, async (req: any, res) => {
+    try {
+      const analysis = journalService.generateTradeAnalysis(req.userId);
+      res.json(analysis);
+    } catch (error) {
+      console.error("Error generating trade analysis:", error);
+      res.status(500).json({ error: "Failed to generate trade analysis" });
+    }
+  });
+
+  // Get recent journal entries
+  app.get("/api/journal/entries", requireAuth, async (req: any, res) => {
+    try {
+      const { limit = 20 } = req.query;
+      const entries = journalService.getRecentEntries(req.userId, parseInt(limit));
+      res.json(entries);
+    } catch (error) {
+      console.error("Error getting journal entries:", error);
+      res.status(500).json({ error: "Failed to get journal entries" });
+    }
+  });
+
+  // Search journal entries
+  app.post("/api/journal/search", requireAuth, async (req: any, res) => {
+    try {
+      const entries = journalService.searchEntries(req.userId, req.body);
+      res.json(entries);
+    } catch (error) {
+      console.error("Error searching journal entries:", error);
+      res.status(500).json({ error: "Failed to search journal entries" });
     }
   });
 
@@ -1736,8 +1940,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Strong momentum pole: Strong upward move with minimal pullbacks
     let currentPrice = basePrice;
     for (let i = 0; i < 15; i++) {
-      const upMove = 3 + Math.random() * 2;
-      const pullback = Math.random() * 0.3; // Minimal pullbacks
+      const upMove = 3 + ((i % 5) * 0.4); // Deterministic move based on index
+      const pullback = (i % 10) * 0.03; // Deterministic minimal pullbacks
       currentPrice += upMove - pullback;
       
       candles.push({
@@ -1748,7 +1952,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         high: (currentPrice + 0.5).toString(),
         low: (currentPrice - upMove - 0.3).toString(),
         close: currentPrice.toString(),
-        volume: 1500 + Math.floor(Math.random() * 800),
+        volume: 1500 + Math.floor((i % 80) * 10), // Deterministic volume pattern
         timestamp: new Date(Date.now() + i * 60 * 60 * 1000)
       });
     }
@@ -1784,8 +1988,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Strong momentum pole: Strong downward move with minimal pullbacks
     let currentPrice = basePrice;
     for (let i = 0; i < 15; i++) {
-      const downMove = 3 + Math.random() * 2;
-      const pullback = Math.random() * 0.3; // Minimal pullbacks
+      const downMove = 3 + ((i % 5) * 0.4); // Deterministic move based on index
+      const pullback = (i % 10) * 0.03; // Deterministic minimal pullbacks
       currentPrice -= downMove - pullback;
       
       candles.push({
@@ -1796,7 +2000,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         high: (currentPrice + downMove + 0.3).toString(),
         low: (currentPrice - 0.5).toString(),
         close: currentPrice.toString(),
-        volume: 1500 + Math.floor(Math.random() * 800),
+        volume: 1500 + Math.floor((i % 80) * 10), // Deterministic volume pattern
         timestamp: new Date(Date.now() + i * 60 * 60 * 1000)
       });
     }

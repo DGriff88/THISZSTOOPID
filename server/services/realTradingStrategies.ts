@@ -490,16 +490,16 @@ export class RealTradingStrategiesEngine {
       // Add some realistic price movement
       const volatility = 0.02; // 2% daily volatility
       const trend = 0.001; // 0.1% daily trend
-      const randomMove = (Math.random() - 0.5) * volatility;
+      const deterministicMove = ((i % 10) - 5) * volatility * 0.1; // Use deterministic movement
       
       const currentPrice = i === 49 ? basePrice : data[data.length - 1].close;
-      const dailyChange = currentPrice * (trend + randomMove);
+      const dailyChange = currentPrice * (trend + deterministicMove);
       
       const open = currentPrice;
       const close = currentPrice + dailyChange;
-      const high = Math.max(open, close) * (1 + Math.random() * 0.01);
-      const low = Math.min(open, close) * (1 - Math.random() * 0.01);
-      const volume = Math.floor(1000000 + Math.random() * 5000000);
+      const high = Math.max(open, close) * 1.005; // Fixed 0.5% expansion
+      const low = Math.min(open, close) * 0.995; // Fixed 0.5% contraction
+      const volume = Math.floor(1000000 + ((i % 100) * 50000)); // Deterministic volume
       
       data.push({
         symbol,
@@ -533,7 +533,7 @@ export class RealTradingStrategiesEngine {
       'META': 320
     };
     
-    return basePrices[symbol] || 100 + Math.random() * 200;
+    return basePrices[symbol] || 100 + ((symbol.length % 10) * 20); // Use symbol-based price
   }
 }
 
