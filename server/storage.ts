@@ -351,6 +351,7 @@ export class MemStorage implements IStorage {
       status: insertTrade.status || 'pending',
       strategyId: insertTrade.strategyId || null,
       pnl: insertTrade.pnl || null,
+      price: insertTrade.price.toString(),
       isPaperTrade: insertTrade.isPaperTrade ?? true,
       alpacaOrderId: insertTrade.alpacaOrderId || null,
       patternSignalId: insertTrade.patternSignalId || null
@@ -925,6 +926,7 @@ export class MemStorage implements IStorage {
     const trade: OptionTrade = {
       id,
       ...insertTrade,
+      tradeId: insertTrade.tradeId || null,
       openedAt: insertTrade.openedAt || new Date(),
       isActive: insertTrade.isActive ?? true,
       hasStrayLegs: insertTrade.hasStrayLegs ?? false,
@@ -970,7 +972,13 @@ export class MemStorage implements IStorage {
       id,
       ...insertSession,
       createdAt: new Date(),
-      updatedAt: new Date()
+      updatedAt: new Date(),
+      dailyPnl: insertSession.dailyPnl || '0.00',
+      tradeCount: insertSession.tradeCount || 0,
+      redTrades: insertSession.redTrades || 0,
+      walkRuleTriggered: insertSession.walkRuleTriggered || false,
+      walkRuleReason: insertSession.walkRuleReason || null,
+      gtcOrdersCancelled: insertSession.gtcOrdersCancelled || false
     };
     this.dailySessions.set(id, session);
     return session;
@@ -998,7 +1006,17 @@ export class MemStorage implements IStorage {
     const paycheck: WeeklyPaycheck = {
       id,
       ...insertPaycheck,
-      createdAt: new Date()
+      createdAt: new Date(),
+      baselineGoal: insertPaycheck.baselineGoal || '0.00',
+      stretchGoal: insertPaycheck.stretchGoal || '0.00',
+      actualPnl: insertPaycheck.actualPnl || '0.00',
+      totalTrades: insertPaycheck.totalTrades || 0,
+      winningTrades: insertPaycheck.winningTrades || 0,
+      losingTrades: insertPaycheck.losingTrades || 0,
+      paycheckMet: insertPaycheck.paycheckMet || false,
+      avgRiskPerTrade: insertPaycheck.avgRiskPerTrade || null,
+      maxWeeklyDrawdown: insertPaycheck.maxWeeklyDrawdown || null,
+      isComplete: insertPaycheck.isComplete || false
     };
     this.weeklyPaychecks.set(id, paycheck);
     return paycheck;
@@ -1026,7 +1044,9 @@ export class MemStorage implements IStorage {
     const violation: RuleViolation = {
       id,
       ...insertViolation,
-      detectedAt: new Date()
+      detectedAt: new Date(),
+      sessionId: insertViolation.sessionId || null,
+      optionTradeId: insertViolation.optionTradeId || null
     };
     this.ruleViolations.set(id, violation);
     return violation;
@@ -1078,12 +1098,12 @@ export class MemStorage implements IStorage {
     return analysis;
   }
 
-  async getLatestStrategicAnalysis(userId: string): Promise<StrategicAnalysis | undefined> {
+  async getLatestStrategicAnalysis(userId: string): Promise<StrategicAnalysis | null> {
     const userAnalyses = Array.from(this.strategicAnalyses.values())
       .filter(analysis => analysis.userId === userId)
       .sort((a, b) => b.analysisDate.getTime() - a.analysisDate.getTime());
     
-    return userAnalyses[0];
+    return userAnalyses[0] || null;
   }
 
   async getStrategicAnalyses(userId: string, limit: number = 10): Promise<StrategicAnalysis[]> {
@@ -1186,6 +1206,7 @@ export class MemStorage implements IStorage {
     const strategy: AlgorithmicStrategy = {
       ...insertStrategy,
       id,
+      description: insertStrategy.description || null,
       dailyLossLimit: insertStrategy.dailyLossLimit.toString(),
       maxRiskPerTrade: insertStrategy.maxRiskPerTrade.toString(),
       riskRewardMin: insertStrategy.riskRewardMin.toString(),
