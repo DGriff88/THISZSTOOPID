@@ -9,6 +9,7 @@ const alpacaApiKey = process.env.ALPACA_API_KEY || process.env.VITE_ALPACA_API_K
 const alpacaApiSecret = process.env.ALPACA_API_SECRET || process.env.VITE_ALPACA_API_SECRET;
 const schwabAppKey = process.env.SCHWAB_APP_KEY;
 const schwabAppSecret = process.env.SCHWAB_APP_SECRET;
+const schwabRefreshToken = process.env.SCHWAB_REFRESH_TOKEN;
 
 /**
  * GET REAL BROKER SERVICE - IDENTICAL to routes.ts implementation
