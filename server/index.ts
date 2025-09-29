@@ -189,29 +189,7 @@ apiRouter.post('/ai/generate-picks', async (req, res) => {
   }
 });
 
-// Mount demo API router with ABSOLUTE HIGHEST PRIORITY - bypasses auth middleware
-app.use('/demo-api', apiRouter);
-
-// Also create direct endpoints that frontend can use
-app.get('/api/ai/sentiment/:symbol', (req, res) => {
-  console.log('✅ DIRECT AI SENTIMENT HIT:', req.originalUrl);
-  res.redirect(`/demo-api/ai/sentiment/${req.params.symbol}`);
-});
-
-app.get('/api/ai/recommendation/:symbol', (req, res) => {
-  console.log('✅ DIRECT AI RECOMMENDATION HIT:', req.originalUrl);
-  res.redirect(`/demo-api/ai/recommendation/${req.params.symbol}?${new URLSearchParams(req.query as any)}`);
-});
-
-app.get('/api/ai/market-conditions', (req, res) => {
-  console.log('✅ DIRECT AI MARKET CONDITIONS HIT:', req.originalUrl);
-  res.redirect('/demo-api/ai/market-conditions');
-});
-
-app.post('/api/ai/generate-picks', (req, res) => {
-  console.log('✅ DIRECT GENERATE PICKS HIT:', req.originalUrl);
-  res.redirect(307, '/demo-api/ai/generate-picks'); // 307 preserves POST method
-});
+// REMOVED: Demo API redirects - now using real broker endpoints directly
 
 console.log('🚀 REAL TRADING STRATEGIES MOUNTED - MONEY MAKING FEATURES READY!');
 
