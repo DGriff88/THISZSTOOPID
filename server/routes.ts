@@ -90,6 +90,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const startDate = new Date(endDate.getTime() - (30 * 24 * 60 * 60 * 1000)); // 30 days
       
       let historicalBars;
+      let dataArray;
       if (type === 'alpaca') {
         historicalBars = await service.getBars(
           upperSymbol, 
@@ -97,18 +98,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           startDate.toISOString().split('T')[0], 
           endDate.toISOString().split('T')[0]
         );
+        dataArray = historicalBars; // Alpaca returns array directly
       } else {
         historicalBars = await service.getHistoricalData(upperSymbol, 'daily', 30);
+        dataArray = historicalBars.candles || []; // Schwab returns { candles: [...] }
       }
       
-      if (!historicalBars || historicalBars.length < 2) {
+      if (!dataArray || dataArray.length < 2) {
         throw new Error(`Insufficient historical data for ${upperSymbol}`);
       }
       
       // Calculate REAL technical indicators
       const closes = type === 'alpaca' 
-        ? historicalBars.map((bar: any) => bar.c)
-        : historicalBars.map((bar: any) => bar.close);
+        ? dataArray.map((bar: any) => bar.c)
+        : dataArray.map((bar: any) => bar.close);
       
       // Calculate real day change
       const previousClose = closes[closes.length - 2];
