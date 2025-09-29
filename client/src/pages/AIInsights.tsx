@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { queryClient } from "@/lib/queryClient";
 
 // Type definitions for API responses
 interface MarketSentiment {
@@ -122,7 +123,12 @@ export default function AIInsights() {
             />
             <Button 
               data-testid="button-analyze"
-              onClick={() => setSelectedSymbol(selectedSymbol)}
+              onClick={() => {
+                // Invalidate and refetch all AI queries for the current symbol
+                queryClient.invalidateQueries({ queryKey: ['/api/ai/sentiment', selectedSymbol] });
+                queryClient.invalidateQueries({ queryKey: ['/api/ai/recommendation', selectedSymbol] });
+                queryClient.invalidateQueries({ queryKey: ['/api/ai/market-conditions'] });
+              }}
               className="bg-blue-600 hover:bg-blue-700 text-white"
             >
               Analyze
