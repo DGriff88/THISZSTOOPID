@@ -39,12 +39,16 @@ integrations = ["javascript_mem_db==1.0.0", "javascript_websocket==1.0.0"]
 
 [[ports]]
 localPort = 5000
-externalPort = 80
+externalPort = 5000
 
 [[ports]]
-localPort = 33553
+localPort = 40483
 externalPort = 3001
 
 [[ports]]
-localPort = 40537
+localPort = 41543
 externalPort = 3000
+
+[[ports]]
+localPort = 46459
+externalPort = 80
