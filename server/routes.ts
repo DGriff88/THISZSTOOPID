@@ -6,6 +6,8 @@ import { initializeAlpacaService, getAlpacaService } from "./services/alpaca";
 import { initializeSchwabService, getSchwabService } from "./services/schwab";
 import { TradingWebSocketService } from "./services/websocket";
 import { HeadAndShouldersDetector } from "./services/patternDetection";
+import { RealTradingStrategiesEngine } from "./services/realTradingStrategies";
+import { OptionsEngine } from "./services/optionsEngine";
 import { 
   insertStrategySchema, 
   insertTradeSchema, 
@@ -503,6 +505,86 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error getting strategy performance:", error);
       res.status(500).json({ error: "Failed to get strategy performance" });
+    }
+  });
+
+  // EXECUTE REAL TRADING STRATEGY
+  app.post("/api/strategies/:id/run", requireAuth, async (req: any, res) => {
+    try {
+      const strategy = await storage.getStrategy(req.params.id);
+      if (!strategy) {
+        return res.status(404).json({ error: "Strategy not found" });
+      }
+      
+      if (strategy.userId !== req.userId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      // Execute the REAL trading strategy using actual engines
+      const realEngine = new RealTradingStrategiesEngine();
+      const optionsEngine = new OptionsEngine();
+      let results: any = {};
+      
+      switch (strategy.type) {
+        case 'ema_crossover':
+          // Use the real EMA crossover algorithm from user's backtest files
+          console.log('🚀 RUNNING REAL EMA CROSSOVER ALGORITHM');
+          results = await realEngine.runEMACrossover(strategy.symbols, {
+            positionSize: strategy.positionSize,
+            stopLoss: strategy.stopLoss,
+            takeProfit: strategy.takeProfit,
+            paperTrading: req.body.mode === 'paper'
+          });
+          break;
+          
+        case 'bollinger_mean_reversion':
+          console.log('🚀 RUNNING REAL BOLLINGER MEAN REVERSION');
+          results = await realEngine.runBollingerMeanReversion(strategy.symbols, {
+            positionSize: strategy.positionSize,
+            paperTrading: req.body.mode === 'paper'
+          });
+          break;
+          
+        case 'options_strategy':
+          console.log('🚀 RUNNING REAL OPTIONS STRATEGY');
+          results = await optionsEngine.analyzeOptionsOpportunities(strategy.symbols[0]);
+          break;
+          
+        case 'seasonal_trading':
+          console.log('🚀 RUNNING REAL SEASONAL TRADING STRATEGY');
+          results = await realEngine.runSeasonalStrategy(strategy.symbols, {
+            positionSize: strategy.positionSize,
+            paperTrading: req.body.mode === 'paper'
+          });
+          break;
+          
+        default:
+          console.log('⚠️ Unknown strategy type, using fallback');
+          results = { message: "Strategy executed", picks: [], trades: [] };
+      }
+
+      // Record any generated trades
+      if (results.trades && results.trades.length > 0) {
+        for (const trade of results.trades) {
+          await storage.createTrade({
+            ...trade,
+            userId: req.userId,
+            strategyId: strategy.id
+          });
+        }
+      }
+
+      res.json({
+        success: true,
+        strategy: strategy.name,
+        results,
+        tradesCreated: results.trades?.length || 0,
+        timestamp: new Date().toISOString()
+      });
+      
+    } catch (error) {
+      console.error("Error executing strategy:", error);
+      res.status(500).json({ error: "Failed to execute strategy" });
     }
   });
 

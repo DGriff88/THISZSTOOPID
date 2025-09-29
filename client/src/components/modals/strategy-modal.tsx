@@ -19,6 +19,12 @@ interface StrategyModalProps {
 }
 
 const strategyTypes = [
+  // REAL TRADING STRATEGIES (Based on user's algorithms)
+  { value: 'ema_crossover', label: 'EMA Crossover', category: 'algorithmic', description: '9/21 period EMA crossover with momentum analysis' },
+  { value: 'bollinger_mean_reversion', label: 'Bollinger Mean Reversion', category: 'algorithmic', description: '20-period SMA with 2 std dev bands reversal' },
+  { value: 'seasonal_trading', label: 'Seasonal Trading', category: 'algorithmic', description: 'Memorial Day to Labor Day bullish patterns' },
+  { value: 'options_strategy', label: 'Options Strategy', category: 'algorithmic', description: 'Call options with 120% profit targeting' },
+  
   // Traditional Technical Indicators
   { value: 'moving_average', label: 'Moving Average Crossover', category: 'technical', description: 'Buy/sell when fast MA crosses slow MA' },
   { value: 'rsi', label: 'RSI Oversold/Overbought', category: 'technical', description: 'Trade based on RSI oversold/overbought levels' },

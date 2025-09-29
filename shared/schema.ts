@@ -23,6 +23,11 @@ export const STRATEGY_TYPES = [
   'strategic_portfolio_analysis',
   'pirate_trader_weekly',
   'algorithmic_strategy',
+  'ema_crossover',
+  'seasonal_trading',
+  'options_strategy',
+  'bollinger_mean_reversion',
+  'backtest_strategy',
   'custom'
 ] as const;
 export const PATTERN_TYPES = [
@@ -435,10 +440,23 @@ export const insertStrategySchema = createInsertSchema(strategies).omit({
     "All symbols must be non-empty strings"
   ),
   parameters: z.record(z.any()),
-  positionSize: z.string().refine((val) => {
-    const num = parseFloat(val);
-    return num > 0;
-  }, "Position size must be greater than 0"),
+  positionSize: z.union([z.string(), z.number()]).transform((val) => {
+    const num = typeof val === 'string' ? parseFloat(val) : val;
+    if (isNaN(num) || num <= 0) throw new Error("Position size must be greater than 0");
+    return num.toString();
+  }),
+  stopLoss: z.union([z.string(), z.number(), z.null()]).transform((val) => {
+    if (val === null) return null;
+    const num = typeof val === 'string' ? parseFloat(val) : val;
+    if (isNaN(num) || num <= 0) throw new Error("Stop loss must be greater than 0");
+    return num.toString();
+  }),
+  takeProfit: z.union([z.string(), z.number(), z.null()]).transform((val) => {
+    if (val === null) return null;
+    const num = typeof val === 'string' ? parseFloat(val) : val;
+    if (isNaN(num) || num <= 0) throw new Error("Take profit must be greater than 0");
+    return num.toString();
+  }),
 });
 
 export const insertTradeSchema = createInsertSchema(trades).omit({
@@ -448,10 +466,7 @@ export const insertTradeSchema = createInsertSchema(trades).omit({
   side: tradeSideEnum,
   status: tradeStatusEnum,
   quantity: z.number().int().positive("Quantity must be a positive integer"),
-  price: z.string().refine((val) => {
-    const num = parseFloat(val);
-    return num > 0;
-  }, "Price must be greater than 0"),
+  price: z.number().positive("Price must be greater than 0"),
 });
 
 export const insertPortfolioSnapshotSchema = createInsertSchema(portfolioSnapshots).omit({
