@@ -108,8 +108,8 @@ def test_reddit_integration():
     # Initialize integration
     config = {
         'REDDIT_ENABLED': True,
-        'REDDIT_CLIENT_ID': '8jkzCTWZ4tMiDAsqu_2ltQ',
-        'REDDIT_CLIENT_SECRET': 'EqvLbAs-zkJemu-yjlvg1A7zUanfBg',
+        'REDDIT_CLIENT_ID': os.getenv('REDDIT_CLIENT_ID'),
+        'REDDIT_CLIENT_SECRET': os.getenv('REDDIT_CLIENT_SECRET'),
         'REDDIT_REDIRECT_URI': 'http://localhost',
         'REDDIT_USER_AGENT': 'Schwabbot/1.0'
     }
