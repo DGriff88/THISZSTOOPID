@@ -1,0 +1,12 @@
+endpoint
+
+https://paper-api.alpaca.markets/v2
+
+key
+
+PK27AAST70B1EROHHNNE
+
+secret
+
+2xCc9RXTNN9Iye0SpHbdtrOJuCOVf3cbglZebpi7
+
