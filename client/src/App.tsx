@@ -16,6 +16,7 @@ import AIInsights from "@/pages/AIInsights";
 import TradingCompliance from "@/pages/TradingCompliance";
 import StrategicAnalysis from "@/pages/StrategicAnalysis";
 import TradingStrategies from "@/pages/TradingStrategies";
+import { AnimatedIconDemo } from "@/components/AnimatedIconDemo";
 import Sidebar from "@/components/layout/sidebar";
 
 function Router() {
@@ -36,6 +37,7 @@ function Router() {
           <Route path="/trading-compliance" component={TradingCompliance} />
           <Route path="/risk-management" component={RiskManagement} />
           <Route path="/settings" component={Settings} />
+          <Route path="/icon-demo" component={AnimatedIconDemo} />
           <Route component={NotFound} />
         </Switch>
       </main>
