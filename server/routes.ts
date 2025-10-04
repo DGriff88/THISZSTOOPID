@@ -2385,13 +2385,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const tokens = await broker.service.exchangeCodeForTokens(code);
       
-      // In a real app, you'd save these tokens securely to your user's account
-      // For now, we'll just return success
+      // Return the refresh token so it can be saved to environment variables
       res.json({ 
         success: true, 
-        message: "OAuth completed successfully",
-        // Don't return actual tokens for security
-        hasRefreshToken: !!tokens.refresh_token 
+        message: "OAuth completed successfully. Save the refresh_token to your SCHWAB_REFRESH_TOKEN secret.",
+        refresh_token: tokens.refresh_token,
+        instructions: "Copy the refresh_token value and add it to your Replit Secrets as SCHWAB_REFRESH_TOKEN"
       });
     } catch (error) {
       console.error("Error in Schwab OAuth callback:", error);
